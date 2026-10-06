@@ -1,8 +1,8 @@
 # Verification — 6 October 2026
 
-All checks used the current local source and build. Automated tests use fake providers and temporary databases; the live Bright checks use the user's existing server-side `.env` without printing credentials or JWTs.
+This report records checks as the implementation evolved; earlier sections describe the version tested at that stage. The later sections describe the current hosted architecture and recent changes. Automated tests use fake providers and temporary databases; the live Bright checks use the user's existing server-side `.env` without printing credentials or JWTs.
 
-## Completed checks
+## Initial SQLite implementation checks
 
 | Requirement | Evidence |
 |---|---|
@@ -24,7 +24,7 @@ All checks used the current local source and build. Automated tests use fake pro
 | Locally runnable delivery | `python3 scripts/run.py --production` started both services, and the production UI and proxy returned HTTP 200. A launcher shutdown stopped its child services, and restart succeeded. |
 | Documentation | Root README includes prerequisites, development/production commands, tariff semantics, provider extension points, security boundaries, backups, tests and troubleshooting. |
 
-## Automated results
+## Initial automated results
 
 - `python3 -m unittest discover -s tests -v`: **32 passed**.
 - `npm run typecheck` (inside `dashboard`): **passed**.
@@ -32,13 +32,13 @@ All checks used the current local source and build. Automated tests use fake pro
 - Python source compilation: **passed**.
 - Final production-browser error logs: **no errors**.
 
-The Vinext build prints a static-analysis notice that the React page route cannot be classified. The route was verified by serving the production build, loading it in the browser and exercising the local API. Node also emits a dependency deprecation notice for `module.register()`; it did not prevent checks, the build or runtime from completing.
+The initial, now-replaced Vinext build printed a static-analysis notice that the React page route cannot be classified. The route was verified by serving the production build, loading it in the browser and exercising the local API. That build also emitted a dependency deprecation notice for `module.register()`; it did not prevent checks, the build or runtime from completing.
 
 Private preview captures are saved in ignored `data/preview-desktop.jpg` and `data/preview-mobile.jpg`.
 
 ## Product limits kept explicit
 
-This is a local, single-household app. It is not published or exposed to a physical phone/network by default. Bright timestamps are treated as UTC, while imported tariff windows assume UK local time and rates as reported; the response does not explicitly establish its VAT/clock conventions. Both uncertainties appear in the UI. Enter confirmed historical rates to price earlier periods, and use confirmed manual rates for bill-aligned estimates. Supplier billing rounding and intelligent tariff adjustments are outside this first version.
+SQLite mode is local and single-household. Hosted mode supports separate household accounts; no public deployment has been performed. The local preview remains bound to loopback. Bright timestamps are treated as UTC, while imported tariff windows assume UK local time and rates as reported; the response does not explicitly establish its VAT/clock conventions. Both uncertainties appear in the UI. Enter confirmed historical rates to price earlier periods, and use confirmed manual rates for bill-aligned estimates. Supplier billing rounding and intelligent tariff adjustments are outside this first version.
 
 ## Tariff editing, chart colours and CSV export
 
@@ -80,3 +80,14 @@ This is a local, single-household app. It is not published or exposed to a physi
 - The NPM-compatible nginx TLS fixture passed trusted client-IP hashing, browser header-spoof rejection, rejection of a different Docker peer, Origin guards, no-store/security headers and request-body bounds. The test uses NPM's forwarding behaviour; it does not reconfigure or certify the user's actual NPM installation.
 - HOSTING.md includes the external network with a separate dynamic IP range, fixed NPM address, Proxy Host settings, log controls and the compose-npm.sh wrapper for all deployment/maintenance commands.
 - Full NPM-mode Docker integration completed successfully with two API and two worker replicas, including secure registration/cookies, household isolation, queued imports, dashboard access, encrypted online backup/restore and erasure safeguards. Its 11 PostgreSQL tests passed; disposable containers/networks/volumes were removed afterward.
+
+## Persistent local hosted preview and interface updates
+
+- Added `compose.local.yaml`, `deploy/Caddyfile.local` and `scripts/run-hosted-local.py` for a persistent, loopback-only PostgreSQL preview at https://localhost:8443. Separate secrets, TLS files and invitation links remain in ignored `data/hosted-local/`; existing SQLite data and `.env` are not automatically imported.
+- Verified the hosted login returned HTTP 200 over HTTPS using its local certificate. Anonymous account endpoints remain protected; local HSTS is omitted so other localhost HTTP apps remain usable. Production security headers remain configured separately.
+- Hosted browser inspection was blocked by the in-app browser's self-signed certificate warning. The user must accept the local exception and complete registration/Bright connection themselves; no completed live hosted household import is claimed here.
+- Management commands now close the PostgreSQL pool before exiting. The status command completed without the prior pool shutdown delay.
+- Reduced the minimum sign-in password length to 12 in both backend validation and registration/password-change forms. **16 hosted tests passed**, including rejection of 11-character passwords, acceptance of 12-character passwords and session revocation after password change.
+- Removed the sidebar privacy footer and its unused styles. The running SQLite dashboard was visually inspected and the sidebar captured in ignored `data/sidebar-without-label.png`.
+- Frontend lint, TypeScript checks, final hosted production Docker build and whitespace checks passed. The rebuilt local hosted frontend was started and its login endpoint returned HTTP 200.
+- Before commit `f8d4576`, staged files were checked against private configuration and generated runtime secrets: none were included. The local preview and UI changes were committed with a clean working tree.

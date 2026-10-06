@@ -1,10 +1,24 @@
 # Powerall
 
-A mobile-friendly, local electricity dashboard powered by Bright / Hildebrand Glowmarkt.
+A mobile-friendly electricity dashboard powered by Bright / Hildebrand Glowmarkt, with a single-household SQLite mode and an invite-only, multi-household Docker deployment.
 
 It discovers electricity meters, imports half-hourly readings, keeps a local history, overlays tariff windows, and estimates costs. Day, week and month views show reading coverage, unknown prices and comparisons. Historical tariffs can be entered from a bill, including off-peak windows, effective dates, VAT and UK/UTC clock conventions.
 
-## Run locally
+## Test the full account flow locally
+
+For registration, sign-in, separate household accounts and background imports, use the Docker preview. Requirements: Docker with Compose v2 supporting `!override`, and Python with the packages in `requirements-hosted.txt`:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-hosted.txt
+.venv/bin/python scripts/run-hosted-local.py start
+```
+
+Open the invitation printed by the launcher and create an account with a password of at least 12 characters. Connect your Bright account under **Data & connection**, then wait for the initial import. The preview runs at **https://localhost:8443**, uses a self-signed certificate and may require you to accept a localhost certificate exception in your browser. It uses separate PostgreSQL data and keys; your original SQLite history and `.env` are not imported.
+
+Use `scripts/run-hosted-local.py invite`, `status` or `stop` with the same Python interpreter to create another invitation, inspect services or stop the preview. Stopping preserves data. See [HOSTING.md](HOSTING.md#full-hosted-flow-on-your-computer) for details and the separate remote deployment instructions.
+
+## Run the single-household SQLite mode
 
 Requirements: Python 3.10+ with UK timezone data (normal macOS/Linux installations), Node 22.13+ and npm. Python uses the standard library; no Python packages are needed.
 
@@ -44,7 +58,7 @@ python3 scripts/run.py --production
 
 The built UI uses the same URL and local data service. Build before using production mode after frontend changes.
 
-For development with separate terminals, run `python3 -m powerall.server` at the project root and `npm run dev -- --host 127.0.0.1` inside `dashboard`. The API defaults to port 8765. The launcher propagates a configured API port to the UI without propagating credentials. If you start the UI separately with a custom API port, set only `POWERALL_PORT` for that process.
+For development with separate terminals, run `python3 -m powerall.server` at the project root and `npm run dev` inside `dashboard`. The API defaults to port 8765. The launcher propagates a configured API port to the UI without propagating credentials. If you start the UI separately with a custom API port, set only `POWERALL_PORT` for that process.
 
 ## Tariffs and estimated costs
 
@@ -82,6 +96,8 @@ Completed days/weeks/months compare with the prior corresponding calendar period
 
 ## Architecture and security
 
+The following components describe the single-household SQLite mode. Hosted mode adds PostgreSQL storage and isolation (`postgres.py`, `schema.sql`), authentication (`auth.py`, `hosted.py`), durable workers (`jobs.py`) and operator commands (`manage.py`). Its security and operational setup are documented in [HOSTING.md](HOSTING.md).
+
 - `powerall/bright.py`: read-only provider adapter; authentication, resource discovery, UTC readings and tariff normalization. JWTs live only in server memory and are reauthenticated after expiry or a 401.
 - `powerall/providers.py`: provider protocol and normalized meter contract. Future Octopus adapters implement discovery, readings and tariffs; analytics and charts do not depend on Bright response shapes.
 - `powerall/storage.py`: SQLite readings, meters, tariffs and sync state. Corrections upsert by meter/UTC interval. The database contains no passwords or JWTs.
@@ -90,7 +106,7 @@ Completed days/weeks/months compare with the prior corresponding calendar period
 - `powerall/server.py`: standard-library HTTP API bound only to loopback, with Host/Origin validation, request size limits and a per-launch CSRF token for writes. No CORS grant is returned.
 - `dashboard/app`: React/Next.js interface and an allow-listed local API proxy. Credentials are never sent to the browser or placed in the frontend environment by the launcher.
 
-This first version is for one household on one computer. Both services bind to loopback. It is not ready for multi-user or public hosting; that would need user authentication, per-user data isolation, a secrets vault and Bright organisation access. Do not expose it using a tunnel or bind it to the public network without implementing those controls. A phone-sized browser preview is supported; access from a physical phone is not enabled by the default loopback binding.
+The SQLite launcher serves one household on one computer without account authentication. Both services bind to loopback; keep this mode private to the computer. For multiple households or public hosting, use the authenticated Docker deployment in [HOSTING.md](HOSTING.md). A phone-sized browser preview is supported; access from a physical phone is not enabled by the default loopback binding.
 
 The `data/` directory and `.env` are excluded from version control. The data directory uses owner-only permissions and the database file is mode 0600. Back up `data/powerall.sqlite3` while the app is stopped to preserve imported history and manual tariffs. No telemetry or third-party fonts are added by the app.
 
