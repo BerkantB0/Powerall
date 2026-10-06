@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+data/
+__pycache__/
+*.pyc
+.DS_Store
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.wrangler/
+dashboard/.next/
+dashboard/.env*
+*.log
+*.tsbuildinfo
