@@ -12,3 +12,8 @@ dashboard/.next/
 dashboard/.env*
 *.log
 *.tsbuildinfo
+
+.venv/
+deploy/secrets/
+deploy/hosting.env
+backups/

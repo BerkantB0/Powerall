@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the local API and Vinext interface together, without exporting secrets."""
+"""Launch the local API and Next.js interface together, without exporting secrets."""
 import os
 from pathlib import Path
 import signal
@@ -17,7 +17,7 @@ def main():
         print('Frontend dependencies are missing. Run: cd dashboard && npm ci')
         return 1
     config = load_env(ROOT / '.env')
-    if production and not (ROOT / 'dashboard/dist/server/index.js').exists():
+    if production and not (ROOT / 'dashboard/.next/BUILD_ID').exists():
         print('Production build is missing. Run: cd dashboard && npm run build')
         return 1
     environment = os.environ.copy()
@@ -25,8 +25,7 @@ def main():
     environment.pop('BRIGHT_USERNAME', None)
     environment.pop('BRIGHT_PASSWORD', None)
     environment['POWERALL_PORT'] = config.get('POWERALL_PORT', '8765')
-    environment['WRANGLER_SEND_METRICS'] = 'false'
-    environment['CLOUDFLARE_CF_FETCH_ENABLED'] = 'false'
+    environment['NEXT_TELEMETRY_DISABLED'] = '1'
     children = []
     def stop(*_):
         for child in children:
@@ -39,7 +38,7 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     try:
         children.append(subprocess.Popen([sys.executable, '-m', 'powerall.server'], cwd=ROOT, start_new_session=True))
-        command = ['npm', 'run', 'start'] if production else ['npm', 'run', 'dev', '--', '--host', '127.0.0.1']
+        command = ['npm', 'run', 'start'] if production else ['npm', 'run', 'dev']
         children.append(subprocess.Popen(command, cwd=ROOT / 'dashboard', env=environment, start_new_session=True))
         print('Powerall is starting. Open http://localhost:5173', flush=True)
         while all(child.poll() is None for child in children):

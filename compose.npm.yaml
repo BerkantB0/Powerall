@@ -1,0 +1,17 @@
+# Docker Compose >= 2.24.4. Apply explicitly after compose.yaml.
+services:
+  gateway:
+    ports: !reset []
+    environment: !override
+      POWERALL_DOMAIN: ${POWERALL_DOMAIN:?Set the public hostname}
+      POWERALL_TRUSTED_PROXY_CIDRS: ${POWERALL_TRUSTED_PROXY_CIDRS:?Set NPM's fixed IP/CIDR; do not trust all private networks}
+    volumes:
+      - ./deploy/Caddyfile.npm:/etc/caddy/Caddyfile:ro
+    networks: !override
+      web: {}
+      npm:
+        aliases: [powerall-gateway]
+networks:
+  npm:
+    external: true
+    name: ${POWERALL_PROXY_NETWORK:?Set the dedicated network shared with NPM}

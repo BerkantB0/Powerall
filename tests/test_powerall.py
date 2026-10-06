@@ -172,22 +172,32 @@ class BrightTests(unittest.TestCase):
                 return {'status':'OK','data':[[0,1000],[1800,None],[3600,-1],[5400,'NaN'],[7201,2],[7200,500],[9000,50],[True,2]]}
         result=Fixture('unused','unused').readings(Meter('e','r',None,'Home','Wh'),0,9000)
         self.assertEqual(result,[(0,'1'),(7200,'0.5')])
+    def test_provider_transport_refuses_redirects(self):
+        from powerall.bright import NoRedirect, safe_urlopen
+        req=Request('https://api.glowmarkt.com/api/v0-1/auth',data=b'fixture',headers={'token':'fixture'})
+        for code in (301,302,303,307,308):
+            self.assertIsNone(NoRedirect().redirect_request(req,None,code,'redirect',{},'https://other.example/'))
+        with patch('urllib.request.build_opener') as factory:
+            safe_urlopen(req,timeout=30)
+            self.assertIsInstance(factory.call_args.args[0],NoRedirect)
+            factory.return_value.open.assert_called_once_with(req,timeout=30)
+
     def test_token_expiry_and_401_reauthenticate(self):
         import urllib.error
         class Response:
             def __enter__(self):return self
             def __exit__(self,*args):pass
-            def read(self):return b'{"status":"OK","data":[]}'
+            def read(self,limit=None):return b'{"status":"OK","data":[]}'
         provider=Bright('u','p')
         provider._token='old'
         provider._expires=int(time.time())+3600
         def authenticate():
             provider._token='new';provider._expires=int(time.time())+3600
-        with patch.object(provider,'_authenticate',side_effect=authenticate) as auth, patch('urllib.request.urlopen',side_effect=[urllib.error.HTTPError('safe',401,'Denied',{},None),Response()]):
+        with patch.object(provider,'_authenticate',side_effect=authenticate) as auth, patch('powerall.bright.safe_urlopen',side_effect=[urllib.error.HTTPError('safe',401,'Denied',{},None),Response()]):
             self.assertEqual(provider._request('/virtualentity')['status'],'OK')
             self.assertEqual(auth.call_count,1)
         provider._expires=0
-        with patch.object(provider,'_authenticate',side_effect=authenticate) as auth, patch('urllib.request.urlopen',return_value=Response()):
+        with patch.object(provider,'_authenticate',side_effect=authenticate) as auth, patch('powerall.bright.safe_urlopen',return_value=Response()):
             provider._request('/virtualentity')
             self.assertEqual(auth.call_count,1)
 

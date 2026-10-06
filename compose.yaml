@@ -1,0 +1,198 @@
+name: powerall
+services:
+  gateway:
+    image: caddy:2.11-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      POWERALL_DOMAIN: ${POWERALL_DOMAIN:?Set a domain in deploy/hosting.env}
+      POWERALL_ACME_EMAIL: ${POWERALL_ACME_EMAIL:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/security.caddy:/etc/caddy/security.caddy:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge, web]
+    depends_on:
+      frontend:
+        condition: service_healthy
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 128m
+    pids_limit: 100
+    logging: &logging
+      driver: json-file
+      options: { max-size: "5m", max-file: "2" }
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    restart: unless-stopped
+    environment:
+      POWERALL_MODE: hosted
+      POWERALL_PUBLIC_ORIGIN: https://${POWERALL_DOMAIN}
+      POWERALL_INTERNAL_TOKEN_FILE: /run/secrets/internal_token
+    secrets: [internal_token]
+    networks: [web, backend]
+    depends_on:
+      api:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    pids_limit: 100
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *logging
+  api:
+    image: powerall-api
+    build: &api_build
+      context: .
+      dockerfile: deploy/Dockerfile.api
+    restart: unless-stopped
+    environment: &api_environment
+      POWERALL_DATA_DIR: /data
+      POWERALL_DATABASE_HOST: ${POWERALL_DATABASE_HOST:-database}
+      POWERALL_DATABASE_NAME: ${POWERALL_DATABASE_NAME:-powerall}
+      POWERALL_DATABASE_USER: ${POWERALL_DATABASE_USER:-powerall}
+      POWERALL_DATABASE_SSLMODE: ${POWERALL_DATABASE_SSLMODE:-prefer}
+      POWERALL_DATABASE_SSLROOTCERT: ${POWERALL_DATABASE_SSLROOTCERT:-}
+      POWERALL_DATABASE_PASSWORD_FILE: /run/secrets/database_password
+      POWERALL_IMPORT_DAYS: ${POWERALL_IMPORT_DAYS:-90}
+      POWERALL_REFRESH_HOURS: ${POWERALL_REFRESH_HOURS:-6}
+      POWERALL_DB_POOL_SIZE: ${POWERALL_DB_POOL_SIZE:-8}
+      POWERALL_PROVIDER_INTERVAL_SECONDS: ${POWERALL_PROVIDER_INTERVAL_SECONDS:-1}
+      POWERALL_PUBLIC_ORIGIN: https://${POWERALL_DOMAIN}
+      POWERALL_ENCRYPTION_KEY_FILE: /run/secrets/encryption_key
+      POWERALL_INTERNAL_TOKEN_FILE: /run/secrets/internal_token
+      POWERALL_OPERATOR_NAME: ${POWERALL_OPERATOR_NAME:?Set the operator name}
+      POWERALL_PRIVACY_CONTACT: ${POWERALL_PRIVACY_CONTACT:?Set the privacy contact}
+      POWERALL_HOSTING_LOCATION: ${POWERALL_HOSTING_LOCATION:?Set the hosting location}
+      POWERALL_PRIVACY_LEGAL_BASIS: ${POWERALL_PRIVACY_LEGAL_BASIS:?Set the privacy legal basis}
+      POWERALL_BRIGHT_ENABLED: ${POWERALL_BRIGHT_ENABLED:-true}
+      POWERALL_MAX_ACCOUNTS: ${POWERALL_MAX_ACCOUNTS:-}
+      POWERALL_BRIGHT_APPLICATION_ID: ${POWERALL_BRIGHT_APPLICATION_ID:-}
+    secrets: [encryption_key, internal_token, database_password]
+    networks: [backend]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 384m
+    pids_limit: 100
+    stop_grace_period: 50s
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *logging
+  database:
+    command: [postgres, -c, log_min_error_statement=panic, -c, log_parameter_max_length_on_error=0]
+    image: powerall-database
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.database
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/database_admin_password
+    secrets: [database_password, database_admin_password]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    shm_size: 128m
+    mem_limit: 768m
+    pids_limit: 200
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d powerall"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+  migrate:
+    image: powerall-api
+    build: *api_build
+    environment: *api_environment
+    secrets: [encryption_key, database_password]
+    networks: [backend]
+    depends_on:
+      database:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command: [python, -m, powerall.manage, migrate]
+    logging: *logging
+  worker:
+    image: powerall-api
+    build: *api_build
+    restart: unless-stopped
+    environment: *api_environment
+    secrets: [encryption_key, database_password]
+    networks: [backend, imports]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    pids_limit: 50
+    stop_grace_period: 60s
+    command: [python, -m, powerall.jobs]
+    logging: *logging
+  maintenance:
+    image: powerall-api
+    profiles: [tools]
+    environment:
+      <<: *api_environment
+      POWERALL_BACKUP_KEY_FILE: /run/secrets/backup_key
+      POWERALL_DATABASE_ADMIN_PASSWORD_FILE: /run/secrets/database_admin_password
+    secrets: [encryption_key, backup_key, database_password, database_admin_password]
+    networks: [backend]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 384m
+    pids_limit: 50
+    command: [python, -m, powerall.manage, backup]
+
+networks:
+  edge:
+  web:
+    internal: true
+  backend:
+    internal: true
+  imports:
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+secrets:
+  encryption_key:
+    file: ./deploy/secrets/encryption_key
+  internal_token:
+    file: ./deploy/secrets/internal_token
+  backup_key:
+    file: ./deploy/secrets/backup_key
+  database_password:
+    file: ./deploy/secrets/database_password
+  database_admin_password:
+    file: ./deploy/secrets/database_admin_password

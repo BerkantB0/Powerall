@@ -44,6 +44,7 @@ class Store:
         db = sqlite3.connect(self.path, timeout=30)
         db.row_factory = sqlite3.Row
         db.execute('PRAGMA journal_mode=WAL')
+        db.execute('PRAGMA secure_delete=ON')
         try:
             yield db
             db.commit()

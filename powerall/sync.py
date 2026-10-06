@@ -9,14 +9,15 @@ from .providers import ProviderError
 from .timeutils import UTC, HALF_HOUR
 
 class SyncService:
-    def __init__(self, store, provider, initial_days=90, refresh_hours=6):
+    def __init__(self, store, provider, initial_days=90, refresh_hours=6, recover=True):
         self.store, self.provider = store, provider
         self.initial_days, self.refresh_hours = initial_days, refresh_hours
+        self._scheduled = False
         self._lock, self._stop = threading.Lock(), threading.Event()
-        self.store.execute("UPDATE sync_runs SET status='failed',finished=?,error='Import interrupted by app restart.',phase='Interrupted' WHERE status='running'", (int(time.time()),))
+        if recover: self.store.execute("UPDATE sync_runs SET status='failed',finished=?,error='Import interrupted by app restart.',phase='Interrupted' WHERE status='running'", (int(time.time()),))
 
     def trigger(self, days=None):
-        if not self._lock.acquire(blocking=False):
+        if self._stop.is_set() or not self._lock.acquire(blocking=False):
             return False
         worker = threading.Thread(target=self._run, args=(days,), daemon=True)
         worker.start()
@@ -61,6 +62,9 @@ class SyncService:
                         db.executemany('''INSERT INTO readings(meter_id,start,kwh,updated) VALUES(?,?,?,?)
                             ON CONFLICT(meter_id,start) DO UPDATE SET kwh=excluded.kwh,updated=excluded.updated''',
                             [(meter_id, instant, value, int(time.time())) for instant, value in readings])
+                        retention = getattr(self, 'retention_days', None)
+                        if retention:
+                            db.execute('DELETE FROM readings WHERE start<?', (int(time.time()) - retention * 86400,))
                     imported += len(readings)
                     self.store.execute('UPDATE sync_runs SET imported=? WHERE id=?', (imported, run_id))
                     start = chunk_end
@@ -81,6 +85,8 @@ class SyncService:
             self._lock.release()
 
     def schedule(self):
+        if self._scheduled: return
+        self._scheduled = True
         def loop():
             while not self._stop.is_set():
                 state = self.store.sync_state()

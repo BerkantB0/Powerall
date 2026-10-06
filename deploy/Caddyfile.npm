@@ -1,0 +1,30 @@
+{
+    admin off
+    auto_https off
+    servers {
+        trusted_proxies static {$POWERALL_TRUSTED_PROXY_CIDRS}
+        trusted_proxies_strict
+        client_ip_headers X-Forwarded-For
+        timeouts {
+            read_header 10s
+            read_body 20s
+            write 60s
+            idle 60s
+        }
+    }
+}
+http://{$POWERALL_DOMAIN}:8080 {
+    import /etc/caddy/security.caddy
+    # Check the actual peer, not its forwarded address. Only NPM may enter here.
+    @untrusted not remote_ip {$POWERALL_TRUSTED_PROXY_CIDRS}
+    respond @untrusted "Access refused." 403
+    reverse_proxy frontend:3000 {
+        header_up X-Powerall-Client-IP {client_ip}
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {$POWERALL_DOMAIN}
+        header_up X-Forwarded-For {client_ip}
+        header_up X-Real-IP {client_ip}
+        header_up -X-Powerall-Internal
+        header_up -Authorization
+    }
+}

@@ -47,3 +47,36 @@ This is a local, single-household app. It is not published or exposed to a physi
 - TypeScript checks and the production build passed after these changes.
 - Browser checks showed separate off-peak day bars and stacked week bars, the CSV export control and resulting notification, and correctly prefilled manual tariff dates/rates/windows. The edit form was inspected at 390×844. Existing household tariffs were not changed during verification.
 - The running development frontend picked up source changes. The existing Python service requires a restart before the new edit handler is active.
+
+## Initial multi-household Docker hosting (superseded below)
+
+- Added invite-only accounts, password hashing, secure seven-day sessions, Origin/CSRF checks, internal service authentication, encrypted per-account Bright credentials and separate household databases.
+- Regression suite: **50 tests passed**, including cross-tenant meter/tariff/export access, invitation expiry/reuse, session revocation, encrypted credential binding, operator restore safeguards, backup tampering, retention cleanup and provider redirect refusal. Presentation tests: **4 passed**.
+- Standard Next.js replaced the preview/Cloudflare toolchain. Lint, TypeScript, local production build and standalone Docker build passed. Both official-base Docker images built successfully. Caddy configuration validated.
+- The full disposable Docker integration test passed over verified HTTPS: registration, secure cookies, session-protected endpoints, cross-account access rejection, Origin/CSRF guards, security headers, unpublished application ports, non-root/read-only services and encrypted backup round-trip. Test volumes/containers were removed afterward. No real Bright calls were made.
+- npm audit (all retained dependencies): **0 vulnerabilities**. pip-audit for every pinned Python production package: **no known vulnerabilities**. These are point-in-time advisory checks, not an independent penetration test or an audit of every operating-system package in the images.
+- Source scan found no actual local Bright username/password in tracked or candidate source files. Docker build contexts exclude `.env`, real readings, screenshots, deployment secrets and the virtual environment.
+- New registration/sign-in controls were inspected at mobile width. Existing real household credentials/readings were not migrated into hosted storage. The real deployment requires domain/operator configuration. Bright is enabled for the stated personal/friends use.
+- The initial SQLite deployment had a small account quota and one API process. The PostgreSQL architecture below replaces those limits.
+
+## Scalable PostgreSQL hosting
+
+- Removed the default account quota and the 25-account ceiling. Registration remains invite-only; an optional positive capacity setting is available.
+- Added shared PostgreSQL accounts/sessions, tenant-prefixed keys, forced row-level security and bounded connection pools. API replicas are stateless; hosted SQLite data is imported only by an explicit transactional migration.
+- Added separate worker replicas, durable per-household jobs, advisory locks, write ownership fencing, deduplication, crash replay, retries that preserve historical import ranges, shared per-HTTP-request throttling/429 cooldowns, leader-claimed housekeeping and worker heartbeats.
+- **50 regression tests passed**. **11 additional real PostgreSQL tests passed** inside the disposable Docker stack: household isolation/context reset, shared session revocation, registration beyond 25 users, concurrent workers, deduplication/crash replay/retries, stale-worker fencing, encrypted credentials/invites/throttles, deletion/erasure cascade, SQLite migration, global HTTP spacing/cooldown, retention and concurrent password-reset/login revocation.
+- Docker HTTPS integration passed with **two API replicas and two worker replicas** (two Gunicorn processes per API). Verified queued status, private ports, non-root/read-only application containers, Origin/CSRF controls, own dashboard access, foreign household rejection and worker monitoring. Providers were mocked/paused; no real Bright calls or user data were used.
+- Online encrypted PostgreSQL backup, separate encrypted erasure-ledger backup, authenticated decryption, actual pg_restore, applying post-backup deletions and revoking restored access all passed. All disposable containers and volumes were removed.
+- Frontend production Docker build, TypeScript, lint and the four presentation tests passed. The UI reports queued imports/retry times and polls every 30 seconds when idle (five seconds during imports).
+- Python production dependency audit found no known advisories. Actual local Bright credentials remain excluded from source and Docker contexts. Existing local SQLite/credentials were not migrated or modified.
+- HOSTING.md documents deployment, five private secrets, independent API/worker scaling, database connection budgets, remote verified TLS settings, aggregate monitoring, migration, online backups and restore safeguards. Domain/operator settings are still needed for real hosting.
+- Replica/concurrency tests verify correctness; no production account-capacity benchmark or independent security assessment is claimed. Physical resource limits and provider throughput still determine capacity.
+
+## Nginx Proxy Manager deployment option
+
+- Added an explicit Compose override that removes gateway host ports, disables Caddy HTTPS/ACME, and attaches only the gateway to a dedicated external NPM network. Standalone HTTPS remains available.
+- Caddy accepts only the configured NPM peer IPs, strictly parses the forwarded client-address chain, and replaces client-IP/host/protocol headers before passing requests to Next.js. Both modes import one shared security policy.
+- Compose merged configuration and both Caddy configurations validated. The frontend production Docker build passed.
+- The NPM-compatible nginx TLS fixture passed trusted client-IP hashing, browser header-spoof rejection, rejection of a different Docker peer, Origin guards, no-store/security headers and request-body bounds. The test uses NPM's forwarding behaviour; it does not reconfigure or certify the user's actual NPM installation.
+- HOSTING.md includes the external network with a separate dynamic IP range, fixed NPM address, Proxy Host settings, log controls and the compose-npm.sh wrapper for all deployment/maintenance commands.
+- Full NPM-mode Docker integration completed successfully with two API and two worker replicas, including secure registration/cookies, household isolation, queued imports, dashboard access, encrypted online backup/restore and erasure safeguards. Its 11 PostgreSQL tests passed; disposable containers/networks/volumes were removed afterward.

@@ -1,0 +1,21 @@
+{
+    email {$POWERALL_ACME_EMAIL}
+    admin off
+    servers {
+        timeouts {
+            read_header 10s
+            read_body 20s
+            write 60s
+            idle 60s
+        }
+    }
+}
+{$POWERALL_DOMAIN} {
+    # Access logging is intentionally disabled: URLs may contain account context.
+    import /etc/caddy/security.caddy
+    reverse_proxy frontend:3000 {
+        header_up X-Powerall-Client-IP {remote_host}
+        header_up -X-Powerall-Internal
+        header_up -Authorization
+    }
+}

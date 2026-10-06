@@ -88,7 +88,7 @@ Completed days/weeks/months compare with the prior corresponding calendar period
 - `powerall/sync.py`: serial background imports, ten-day chunks, retries through the adapter, correction refreshes and restart/failure recovery. Cached data survives outages. A failed job backs off for one hour; manual retries remain available.
 - `powerall/tariffs.py` / `analytics.py` / `timeutils.py`: provider-independent date, tariff and cost rules.
 - `powerall/server.py`: standard-library HTTP API bound only to loopback, with Host/Origin validation, request size limits and a per-launch CSRF token for writes. No CORS grant is returned.
-- `dashboard/app`: React/Vinext interface and an allow-listed local API proxy. Credentials are never sent to the browser or placed in the frontend environment by the launcher.
+- `dashboard/app`: React/Next.js interface and an allow-listed local API proxy. Credentials are never sent to the browser or placed in the frontend environment by the launcher.
 
 This first version is for one household on one computer. Both services bind to loopback. It is not ready for multi-user or public hosting; that would need user authentication, per-user data isolation, a secrets vault and Bright organisation access. Do not expose it using a tunnel or bind it to the public network without implementing those controls. A phone-sized browser preview is supported; access from a physical phone is not enabled by the default loopback binding.
 
@@ -97,7 +97,7 @@ The `data/` directory and `.env` are excluded from version control. The data dir
 ## Validation
 
 ```sh
-python3 -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -p test_powerall.py -v
 cd dashboard
 node --test lib/energy.test.mjs
 npm run typecheck
@@ -116,3 +116,9 @@ See `VERIFICATION.md` for the completed live checks and browser validation.
 - **Missing earlier tariff:** add the rates that actually applied to that historical period. The latest tariff is deliberately not backdated.
 - **Interrupted import:** the next launch marks the interrupted run as failed; refresh to continue. Completed chunks remain stored.
 - **No readings before a date:** a longer import cannot recover data Bright does not supply. The interface reports the resulting gaps.
+
+## Public hosting
+
+See [HOSTING.md](HOSTING.md) for the invite-only Docker deployment with separate household accounts, authentication, encrypted Bright credentials, PostgreSQL household isolation, shared sessions, a durable import queue, separate workers, online encrypted backups and privacy controls. The local launcher remains unauthenticated and binds to loopback; it must not be exposed publicly. Hosted data lives in the PostgreSQL Docker volume; API and workers can scale independently. Account capacity is optional, with no default ceiling.
+
+For Nginx Proxy Manager, use the explicit `compose.npm.yaml` option and `scripts/compose-npm.sh` wrapper documented in [HOSTING.md](HOSTING.md#nginx-proxy-manager). NPM handles external HTTPS; the private Caddy gateway preserves the security policy and trusted client-IP handling.

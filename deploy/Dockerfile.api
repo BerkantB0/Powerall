@@ -1,0 +1,12 @@
+FROM python:3.13-slim-trixie
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+COPY requirements-hosted.txt .
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client-17 && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir -r requirements-hosted.txt \
+    && groupadd --gid 10001 powerall && useradd --uid 10001 --gid powerall --no-create-home powerall \
+    && mkdir /data && chown powerall:powerall /data
+COPY powerall ./powerall
+USER 10001:10001
+EXPOSE 8765
+CMD ["gunicorn", "powerall.hosted:create_app()", "--bind", "0.0.0.0:8765", "--workers", "2", "--worker-class", "gthread", "--threads", "8", "--timeout", "60", "--graceful-timeout", "45", "--worker-tmp-dir", "/tmp", "--limit-request-line", "4094", "--limit-request-fields", "50", "--limit-request-field_size", "4094"]

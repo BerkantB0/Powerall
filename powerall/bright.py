@@ -10,14 +10,25 @@ from .providers import Meter, ProviderError
 from .tariffs import number, validate_windows, TariffError
 from .timeutils import UTC, HALF_HOUR, parse_instant
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Never forward credentials or JWT headers to a redirect destination.
+        return None
+
+def safe_urlopen(request, timeout):
+    return urllib.request.build_opener(NoRedirect()).open(request, timeout=timeout)
+
 class Bright:
     name = 'bright'
     base = 'https://api.glowmarkt.com/api/v0-1'
     application_id = 'b0f1b774-a586-4f72-9edd-27ead8aa7a8d'
 
-    def __init__(self, username, password):
+    def __init__(self, username, password, application_id=None):
+        if application_id: self.application_id = application_id
         self._username, self._password = username, password
         self._token, self._expires = None, 0
+        self.before_request = None
+        self.rate_limited = None
 
     def _request(self, path, payload=None, authenticated=True, retried_auth=False):
         if authenticated and (not self._token or time.time() > self._expires - 60):
@@ -27,13 +38,21 @@ class Bright:
             headers['token'] = self._token
         data = json.dumps(payload).encode() if payload is not None else None
         for attempt in range(3):
+            if self.before_request: self.before_request()
             req = urllib.request.Request(self.base + path, data=data, headers=headers)
             try:
-                with urllib.request.urlopen(req, timeout=30) as response:
-                    result = json.load(response)
+                with safe_urlopen(req, timeout=30) as response:
+                    content = response.read(2 * 1024 * 1024 + 1)
+                    if len(content) > 2 * 1024 * 1024:
+                        raise ProviderError('Bright returned an oversized response. The import was stopped safely.')
+                    result = json.loads(content)
                 return result
             except urllib.error.HTTPError as error:
                 code = error.code
+                if code == 429 and self.rate_limited:
+                    try: delay = min(3600,max(1,float(error.headers.get('Retry-After','60'))))
+                    except (ValueError,TypeError): delay = 60
+                    self.rate_limited(delay)
                 error.close()
                 if code == 401 and authenticated and not retried_auth:
                     self._token = None
