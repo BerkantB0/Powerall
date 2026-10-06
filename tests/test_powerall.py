@@ -328,6 +328,32 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(code,200);self.assertEqual(report['summary']['estimated_cost'],14.9)
         self.assertEqual(self.call('/api/tariffs/delete',{'id':result['id']})[0],200)
         self.assertEqual(self.call('/api/dashboard?meter=m&view=day&date=2026-01-02')[1]['summary']['unpriced'],48)
+    def test_manual_tariff_edit_preserves_id_and_recalculates(self):
+        payload={'meter':'m','label':'Summer','from':'2026-07-01','to':'2026-08-01','rate':'30','standing':'50','windows':[]}
+        _,created=self.call('/api/tariffs',payload)
+        start,end=date_bounds('2026-07-02')
+        with self.store.connection() as db:
+            db.executemany('INSERT INTO readings VALUES(?,?,?,?)',[('m',s,'1',0) for s in range(start,end,HALF_HOUR)])
+        edit={**payload,'id':created['id'],'label':'Corrected','rate':'20','windows':[{'start':'00:30','end':'07:30','rate':'10'}]}
+        code,result=self.call('/api/tariffs',edit)
+        self.assertEqual(code,200);self.assertEqual(result['id'],created['id'])
+        self.assertEqual(len(self.store.tariffs('m')),1)
+        self.assertEqual(self.store.tariffs('m')[0]['label'],'Corrected')
+        report=self.call('/api/dashboard?meter=m&view=day&date=2026-07-02')[1]
+        self.assertEqual(report['summary']['estimated_cost'],8.7)
+        self.assertEqual(report['days'][0]['off_peak_kwh'],14)
+        self.assertEqual(self.call('/api/tariffs',{**payload,'from':'2026-08-01','to':'2026-09-01'})[0],201)
+        self.assertEqual(self.call('/api/tariffs',{**edit,'to':'2026-08-02'})[0],400)
+        self.assertEqual(self.store.tariffs('m')[-1]['label'],'Corrected')
+
+    def test_edit_cannot_modify_provider_other_meter_or_missing_tariff(self):
+        self.store.upsert_tariff(tariff(id='provider',meter_id='m',source='bright'))
+        self.store.upsert_tariff(tariff(id='other',meter_id='other-meter'))
+        payload={'meter':'m','label':'Edit','from':'2026-01-01','rate':'20','standing':'50','windows':[]}
+        for identifier in ('provider','other','missing'):
+            self.assertEqual(self.call('/api/tariffs',{**payload,'id':identifier})[0],404)
+        self.assertEqual(self.store.tariffs('m')[0]['source'],'bright')
+
     def test_invalid_requests_rejected(self):
         for body in ({'days':True},{'days':0},{'days':731},{'days':'90'}):
             self.assertEqual(self.call('/api/sync',body)[0],400)

@@ -132,12 +132,19 @@ def make_handler(store, sync, token, port):
                     if not any(m['id'] == meter for m in store.meters()):
                         raise ValueError('Select a discovered meter.')
                     item = manual_tariff(payload, meter)
+                    editing = payload.get('id') is not None
+                    if editing:
+                        matches = store.rows("SELECT id FROM tariffs WHERE id=? AND meter_id=? AND source='manual'", (payload['id'], meter))
+                        if not matches:
+                            self.send(404, {'error': 'Manual tariff not found for this meter.'})
+                            return
+                        item['id'] = payload['id']
                     # Reject overlapping manual entries rather than silently changing costs.
                     for existing in store.tariffs(meter):
-                        if existing['source'] == 'manual' and item['effective_from'] < (existing['effective_to'] or float('inf')) and existing['effective_from'] < (item['effective_to'] or float('inf')):
-                            raise ValueError('This overlaps another manual tariff. Delete that entry or adjust the effective dates.')
+                        if existing['id'] != item['id'] and existing['source'] == 'manual' and item['effective_from'] < (existing['effective_to'] or float('inf')) and existing['effective_from'] < (item['effective_to'] or float('inf')):
+                            raise ValueError('This overlaps another manual tariff. Adjust the effective dates of either entry.')
                     store.upsert_tariff(item)
-                    self.send(201, {'saved': True, 'id': item['id']})
+                    self.send(200 if editing else 201, {'saved': True, 'id': item['id']})
                 elif route == '/api/tariffs/delete':
                     tariff_id = payload.get('id')
                     matches = store.rows("SELECT id FROM tariffs WHERE id=? AND source='manual'", (tariff_id,))

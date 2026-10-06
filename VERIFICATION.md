@@ -39,3 +39,11 @@ Private preview captures are saved in ignored `data/preview-desktop.jpg` and `da
 ## Product limits kept explicit
 
 This is a local, single-household app. It is not published or exposed to a physical phone/network by default. Bright timestamps are treated as UTC, while imported tariff windows assume UK local time and rates as reported; the response does not explicitly establish its VAT/clock conventions. Both uncertainties appear in the UI. Enter confirmed historical rates to price earlier periods, and use confirmed manual rates for bill-aligned estimates. Supplier billing rounding and intelligent tariff adjustments are outside this first version.
+
+## Tariff editing, chart colours and CSV export
+
+- Backend suite: **34 passed**. New integration cases edit a manual tariff without changing its ID, recalculate costs, reject overlapping dates, and refuse edits to Bright records or another meter's tariff.
+- `cd dashboard && node --test lib/energy.test.mjs`: **4 passed**. Cases cover standard/off-peak/unknown chart breakdowns, standing charges, CSV missing and zero readings, repeated BST/GMT clock times, quoting/formula-safe labels, and UK date conversion for editing.
+- TypeScript checks and the production build passed after these changes.
+- Browser checks showed separate off-peak day bars and stacked week bars, the CSV export control and resulting notification, and correctly prefilled manual tariff dates/rates/windows. The edit form was inspected at 390×844. Existing household tariffs were not changed during verification.
+- The running development frontend picked up source changes. The existing Python service requires a restart before the new edit handler is active.

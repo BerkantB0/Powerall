@@ -60,7 +60,7 @@ Add manual rates from **Tariffs → Add historical tariff**. Enter:
 - Whether windows follow UK local time (BST/GMT) or UTC/GMT all year.
 - Whether your entered prices include VAT. Excluded rates receive 5% domestic VAT once; included rates are used unchanged.
 
-Manual tariffs override Bright during their effective period. Overlapping manual entries are rejected. Delete an incorrect entry, then add its replacement; deletion requires a confirmation in the interface. Bright records cannot be deleted from the interface.
+Manual tariffs override Bright during their effective period. Overlapping manual entries are rejected. Use the pencil button to edit a manual entry, including dates, rates, VAT and off-peak windows. Saving recalculates estimates and preserves the entry. Deletion requires a confirmation in the interface. Bright records cannot be edited or deleted from the interface.
 
 For each observed half-hour, usage cost = kWh × applicable pence/kWh ÷ 100. One standing charge is added per UK calendar day using the tariff effective at that day's midnight. Estimates use decimal arithmetic; rounding is applied for display. They are not a supplier billing reconciliation: supplier-specific rounding, discounts, intelligent charging adjustments and corrections are outside this first version.
 
@@ -69,6 +69,10 @@ Bright does not explicitly identify VAT or tariff window clock conventions in th
 ## Time, missing data and comparisons
 
 Readings are stored as UTC interval-start timestamps, with a half-open `[start, end)` convention. Days and calendar periods are grouped in `Europe/London`. Spring clock-change days have 46 half-hours and autumn days have 50. Repeated autumn times are labelled separately with BST/GMT.
+
+Day charts colour off-peak half-hours separately. Week and month bars stack standard and off-peak usage, with unknown tariff usage shown separately. Cost bars separate usage costs from standing charges.
+
+Use **Export day/week/month as CSV** above the chart to download the selected meter and period. Exports contain elapsed half-hours, UTC timestamps, UK dates and BST/GMT labels, kWh, rates, rate periods, estimated usage costs, tariff names and estimate warnings. Standing charges appear once per day; blank readings or costs stay blank, and future half-hours are omitted.
 
 Missing elapsed readings remain null. Actual zero readings remain zero. Current unfinished half-hours and future dates are not counted as missing. Reading coverage is received / expected elapsed half-hours. Freshness separately shows the latest reading and last successful sync; the dashboard flags readings more than 48 hours behind. Bright may return delayed, missing or zero values; the app cannot independently verify whether a provider-reported zero represents actual usage.
 
@@ -95,11 +99,12 @@ The `data/` directory and `.env` are excluded from version control. The data dir
 ```sh
 python3 -m unittest discover -s tests -v
 cd dashboard
+node --test lib/energy.test.mjs
 npm run typecheck
 npm run build
 ```
 
-The test suite uses isolated temporary databases and fake provider responses. It covers UK clock changes, repeated hours, tariff effective boundaries, overnight windows, UK versus UTC pricing, VAT, daily standing charges, unknown readings/prices, previous-period comparisons, provider parsing, token reconnection, chunked imports, corrections without duplicates, failure retention, concurrent-import exclusion, origin/CSRF/Host checks, and tariff save/recalculation/deletion. Real credentials are not used in automated tests.
+The test suite uses isolated temporary databases and fake provider responses. It covers UK clock changes, repeated hours, tariff effective boundaries, overnight windows, UK versus UTC pricing, VAT, daily standing charges, unknown readings/prices, previous-period comparisons, provider parsing, token reconnection, chunked imports, corrections without duplicates, failure retention, concurrent-import exclusion, origin/CSRF/Host checks, and tariff save/edit/recalculation/deletion. Presentation tests cover stacked consumption/cost breakdowns, CSV missing/zero readings and repeated clock times, spreadsheet-safe text cells, and UK date conversion for edits. Real credentials are not used in automated tests.
 
 See `VERIFICATION.md` for the completed live checks and browser validation.
 
