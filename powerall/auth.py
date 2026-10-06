@@ -25,8 +25,8 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 def password_hash(password, salt=None):
-    if not isinstance(password, str) or not 15 <= len(password) <= 256:
-        raise AuthError('Use a password or passphrase between 15 and 256 characters.')
+    if not isinstance(password, str) or not 12 <= len(password) <= 256:
+        raise AuthError('Use a password or passphrase between 12 and 256 characters.')
     salt = salt or secrets.token_hex(16)
     value = hashlib.pbkdf2_hmac('sha256', password.encode(), bytes.fromhex(salt), ITERATIONS).hex()
     return f'pbkdf2_sha256${ITERATIONS}${salt}${value}'

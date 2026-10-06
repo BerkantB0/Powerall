@@ -75,6 +75,18 @@ class HostedTests(unittest.TestCase):
         self.assertEqual(self.call('/api/auth/register',{**payload,'username':'dora'})[0],400)
         with self.accounts.db() as db:
             self.assertIsNone(db.execute('SELECT token FROM invites WHERE token=?',(digest(invite),)).fetchone())
+    def test_twelve_character_passwords_for_registration_and_change(self):
+        invitation=self.accounts.invite()
+        payload={'username':'policy-user','password':'eleven-char','invite':invitation}
+        self.assertEqual(self.call('/api/auth/register',payload)[0],400)
+        self.assertEqual(len('twelve-char!'),12)
+        code,_,headers=self.call('/api/auth/register',{**payload,'password':'twelve-char!'})
+        self.assertEqual(code,200)
+        token=headers['Set-Cookie'].split(';',1)[0].split('=',1)[1]
+        self.assertEqual(self.call('/api/auth/password',{'password':'twelve-char!','new_password':'eleven-char'},token=token)[0],400)
+        self.assertEqual(self.call('/api/auth/password',{'password':'twelve-char!','new_password':'changed-pass'},token=token)[0],200)
+        self.assertIsNone(self.accounts.session(token))
+        self.assertIsNotNone(self.accounts.login('policy-user','changed-pass','fixture-policy-login'))
     def test_passwords_and_sessions_not_stored_plaintext_and_logout_expires(self):
         with self.accounts.db() as db:
             row=db.execute('SELECT password FROM users WHERE username=?',('alice',)).fetchone()

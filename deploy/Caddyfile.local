@@ -1,0 +1,25 @@
+{
+    admin off
+    auto_https off
+    servers {
+        timeouts {
+            read_header 10s
+            read_body 20s
+            write 60s
+            idle 60s
+        }
+    }
+}
+https://localhost:8443 {
+    tls /run/local-tls/cert.pem /run/local-tls/key.pem
+    route {
+        # Local preview must not force other localhost HTTP apps onto HTTPS.
+        header -Strict-Transport-Security
+        import /etc/caddy/security.caddy
+        reverse_proxy frontend:3000 {
+            header_up X-Powerall-Client-IP {remote_host}
+            header_up -X-Powerall-Internal
+            header_up -Authorization
+        }
+    }
+}

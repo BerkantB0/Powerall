@@ -33,7 +33,7 @@ Bright credentials use AES-256-GCM with the account UUID as associated data. The
 
 Only Caddy publishes ports 80/443. Application containers run as UID 10001 with read-only root filesystems, dropped capabilities and resource bounds. PostgreSQL uses its official image and a private persistent volume. Caddy adds HTTPS, HSTS, framing/referrer/CSP restrictions, no-store and noindex. Access logs are disabled; operational logs rotate. No request bodies, credentials, tokens or user identifiers should be added to logs.
 
-Privileged operators/hosting infrastructure can read data and decrypt credentials. Use encrypted host disks: Docker volumes are not inherently encrypted. There is no MFA/SSO or automatic email recovery yet. Specify the actual operator, privacy contact, hosting location and lawful basis; review the app's `/privacy` page against actual operations. Each user connects their own Bright account and consent. Revisit provider arrangements if this becomes a public or commercial service.
+Privileged operators/hosting infrastructure can read data and decrypt credentials. Use encrypted host disks: Docker volumes are not inherently encrypted. There is no MFA/SSO or automatic email recovery yet. Specify the actual operator, privacy contact, hosting location and lawful basis; review the app's `/privacy` page against actual operations. Sign-in passwords require at least 12 characters. Each user connects their own Bright account and consent. Revisit provider arrangements if this becomes a public or commercial service.
 
 ## Deploy
 
@@ -257,3 +257,23 @@ npm run lint
 ```
 
 The Docker test uses separate disposable volumes, fake accounts/providers and loopback test TLS. It exercises actual PostgreSQL RLS, session sharing, concurrent workers, crash replay, retries, SQLite migration, HTTPS security controls, non-root/private services, encrypted online backup and restoration with deletion protection. It never reads or copies real credentials or household data. Keep base images/dependencies patched and test restore periodically; these checks do not replace independent security review or load testing.
+
+## Full hosted flow on your computer
+
+The existing `scripts/run.py` launcher uses local SQLite and skips account registration. To test the complete hosted flow, use:
+
+```sh
+.venv/bin/python scripts/run-hosted-local.py start
+```
+
+This starts a persistent `powerall-local` Docker project with PostgreSQL, accounts, separate workers and the same production frontend/API. Only `https://localhost:8443` is published, bound to loopback. It creates separate keys and a local HTTPS certificate under ignored `data/hosted-local/`; it preserves your original SQLite data and deployment keys. This preview does not need NPM. The local certificate is self-signed: your browser may require a one-time certificate exception for this localhost address. The launcher does not change your system trust store. HSTS is omitted only in local preview so other localhost HTTP apps remain usable.
+
+The command prints a single-use registration invitation and saves it privately in `data/hosted-local/invitation.txt`. Open it, choose your own username/password, then connect Bright under Data & connection. The first import runs through the durable worker queue; once it completes, test charts, tariffs, exports, sign-out/sign-in and account controls. Create another invite to test a separate household:
+
+```sh
+.venv/bin/python scripts/run-hosted-local.py invite
+.venv/bin/python scripts/run-hosted-local.py status
+.venv/bin/python scripts/run-hosted-local.py stop
+```
+
+Stopping preserves local PostgreSQL data for the next start. Do not delete the local keys while retaining that database: they protect stored Bright credentials. The local preview's file mounts are readable by their intended Docker Desktop containers, while the enclosing host directories are private (0700). For remote deployment, use the separate production secret/UID/ACL instructions above.

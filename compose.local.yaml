@@ -1,0 +1,38 @@
+# Full hosted flow on this computer only. Use scripts/run-hosted-local.py.
+name: powerall-local
+services:
+  gateway:
+    ports: !override
+      - "127.0.0.1:8443:8443"
+    environment: !override
+      POWERALL_DOMAIN: localhost
+    volumes:
+      - ./deploy/Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - ./data/hosted-local/tls:/run/local-tls:ro
+  frontend:
+    environment:
+      POWERALL_PUBLIC_ORIGIN: https://localhost:8443
+  api:
+    environment: &local_environment
+      POWERALL_PUBLIC_ORIGIN: https://localhost:8443
+      POWERALL_OPERATOR_NAME: Local Powerall test
+      POWERALL_PRIVACY_CONTACT: The owner of this computer
+      POWERALL_HOSTING_LOCATION: This computer; loopback access only
+      POWERALL_PRIVACY_LEGAL_BASIS: Personal local testing
+  worker:
+    environment: *local_environment
+  migrate:
+    environment: *local_environment
+  maintenance:
+    environment: *local_environment
+secrets:
+  encryption_key:
+    file: ./data/hosted-local/secrets/encryption_key
+  internal_token:
+    file: ./data/hosted-local/secrets/internal_token
+  backup_key:
+    file: ./data/hosted-local/secrets/backup_key
+  database_password:
+    file: ./data/hosted-local/secrets/database_password
+  database_admin_password:
+    file: ./data/hosted-local/secrets/database_admin_password
