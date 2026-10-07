@@ -91,3 +91,17 @@ SQLite mode is local and single-household. Hosted mode supports separate househo
 - Removed the sidebar privacy footer and its unused styles. The running SQLite dashboard was visually inspected and the sidebar captured in ignored `data/sidebar-without-label.png`.
 - Frontend lint, TypeScript checks, final hosted production Docker build and whitespace checks passed. The rebuilt local hosted frontend was started and its login endpoint returned HTTP 200.
 - Before commit `f8d4576`, staged files were checked against private configuration and generated runtime secrets: none were included. The local preview and UI changes were committed with a clean working tree.
+
+## NPM through a private host IP
+
+- Added `compose.npm-ip.yaml` and `scripts/compose-npm-ip.sh` to publish only gateway port 8080 on an explicitly configured private host IP, without requiring an external/shared Docker network.
+- Validated the merged Compose configuration: exactly one gateway port, correct bind/trusted proxy IPs, the NPM Caddy configuration, no published frontend/API/database ports and no external network declarations. Shell syntax and whitespace checks passed.
+- This reuses the previously tested NPM gateway policy. The new host-IP routing has not been deployed or tested end-to-end on the user's remote host; source-IP routing and actual NPM forwarding must be verified there.
+
+## Recurring weekday and free-hour tariffs — 7 October 2026
+
+- Manual time-of-use windows now support weekday selection, including Sunday-only zero rates. Existing windows without weekdays retain their daily behaviour; window JSON persists without a database schema migration.
+- Weekday-specific windows override daily windows; equally specific overlapping windows are rejected. Overnight windows belong to their start weekday, evaluated in the tariff's chosen UK/UTC clock. Free electricity retains the daily standing charge.
+- Five new backend cases cover Sunday boundaries, normal rates on other days, daily-window precedence, zero VAT-adjusted costs, overnight rollover, UK clock changes, UTC weekdays, validation and persistence. The 40-test SQLite/backend suite passed. The hosted suite passed all 17 tests, including saving/editing/exporting weekday windows. The 11 separately configured PostgreSQL integration tests were skipped in the general suite, not rerun for this change.
+- All five presentation tests passed, including a new free-rate CSV/stacked-chart case. TypeScript, lint and the hosted frontend/API Docker builds passed. Local hosted services were updated after a transient Docker secret-mount I/O failure resolved.
+- The in-app browser's CDP commands timed out on both existing and fresh local tabs, so the changed form has not been visually verified in this session. No guessed Sunday rates or hours were saved to the user's household.

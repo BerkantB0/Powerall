@@ -122,6 +122,56 @@ class CostTests(unittest.TestCase):
         self.assertEqual(tariff_at([newer,older],199)['rate'],'30')
         self.assertEqual(tariff_at([newer,older],200)['rate'],'40')
 
+class WeeklyTariffTests(unittest.TestCase):
+    def window(self, **changes):
+        return {'start': '12:00', 'end': '14:00', 'rate': '0', 'days': [6], **changes}
+    def test_sunday_free_hours_boundaries_and_standing_charge(self):
+        t=tariff(windows=[self.window()])
+        for instant, expected in [('2026-10-11T10:30:00Z',30), ('2026-10-11T11:00:00Z',0),
+                                  ('2026-10-11T12:30:00Z',0), ('2026-10-11T13:00:00Z',30),
+                                  ('2026-10-12T11:00:00Z',30)]:
+            self.assertEqual(interval_rate(t,parse_instant(instant))[0],expected)
+        start,end=date_bounds('2026-10-11')
+        d=day_summary(date(2026,10,11),{s:'1' for s in range(start,end,HALF_HOUR)},[t],end+1)
+        self.assertEqual(d['off_peak_kwh'],4)
+        self.assertEqual(d['standing'],.5)
+        self.assertAlmostEqual(d['estimated_cost'],13.7)
+        self.assertEqual(sum(s['rate']==0 for s in d['slots']),4)
+    def test_weekday_offer_overrides_daily_window_in_either_order(self):
+        daily=self.window(start='11:00',end='15:00',rate='10'); daily.pop('days')
+        for windows in ([daily,self.window()],[self.window(),daily]):
+            t=tariff(windows=windows,vat='excluded')
+            self.assertEqual(usage_cost(t,parse_instant('2026-10-11T11:00:00Z'),2)[0],0)
+            self.assertEqual(interval_rate(t,parse_instant('2026-10-12T11:00:00Z'))[0],Decimal('10.50'))
+    def test_overnight_window_follows_start_weekday(self):
+        t=tariff(windows=[self.window(start='23:00',end='02:00')])
+        for instant,expected in [('2026-10-10T23:30:00Z',30),('2026-10-11T22:00:00Z',0),
+                                 ('2026-10-12T00:30:00Z',0),('2026-10-12T01:00:00Z',30)]:
+            self.assertEqual(interval_rate(t,parse_instant(instant))[0],expected)
+    def test_clock_changes_and_utc_weekday(self):
+        t=tariff(windows=[self.window(start='01:00',end='02:00')])
+        for instant in ('2026-10-25T00:00:00Z','2026-10-25T01:00:00Z'):
+            self.assertEqual(interval_rate(t,parse_instant(instant))[0],0)
+        start,end=date_bounds('2026-03-29')
+        d=day_summary(date(2026,3,29),{s:'1' for s in range(start,end,HALF_HOUR)},[t],end+1)
+        self.assertEqual(d['off_peak_kwh'],0)
+        t=tariff(clock='UTC',windows=[self.window(start='23:00',end='00:00')])
+        self.assertEqual(interval_rate(t,parse_instant('2026-10-11T23:00:00Z'))[0],0)
+    def test_validation_and_storage_round_trip(self):
+        payload={'label':'Sunday offer','from':'2026-10-01','rate':'30','standing':'50','windows':[self.window()]}
+        t=manual_tariff(payload,'m')
+        with tempfile.TemporaryDirectory() as folder:
+            store=Store(Path(folder)/'test.sqlite3')
+            store.execute("INSERT INTO meters(id,provider,provider_entity,resource_id,name) VALUES('m','bright','e','r','Home')")
+            store.upsert_tariff(t)
+            self.assertEqual(store.tariffs('m')[0]['windows'],t['windows'])
+        for days in ([],[7],[True],[6,6],'Sunday'):
+            with self.assertRaises(TariffError): manual_tariff({**payload,'windows':[self.window(days=days)]},'m')
+        manual_tariff({**payload,'windows':[self.window(),self.window(days=[0])]},'m')
+        for windows in ([self.window(),self.window(start='13:00',end='15:00')],
+                        [self.window(start='23:00',end='02:00'),self.window(start='01:00',end='03:00',days=[0])]):
+            with self.assertRaises(TariffError): manual_tariff({**payload,'windows':windows},'m')
+
 class ValidationTests(unittest.TestCase):
     def payload(self,**updates):
         item={'label':'Historical','from':'2026-07-01','to':'2026-10-05','rate':'32.1','standing':'43.61','windows':[]}

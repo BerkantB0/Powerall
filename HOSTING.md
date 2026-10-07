@@ -163,6 +163,59 @@ For scaling, backup and other commands below, substitute `./scripts/compose-npm.
 
 The proxy chain was tested with a disposable nginx TLS frontend using NPM's forwarding-header behaviour, not by altering your existing NPM installation. Test your actual host after deployment: register/sign in, load/export readings, verify security headers and ensure a failed login from one client does not throttle everyone as the proxy's IP.
 
+## NPM through the host's internal IP (no shared network)
+
+Use `compose.npm-ip.yaml` instead of `compose.npm.yaml` when NPM connects to a
+published port on the Powerall host's LAN/private IP. No manual network creation
+or NPM network changes are required. Compose still creates Powerall's application
+networks for isolation. Only the gateway publishes a port; frontend, API and
+PostgreSQL remain private.
+
+For example, with Powerall on `192.168.1.50`, NPM on `192.168.1.10`, and the
+public hostname `energy.example.com`, set these in `deploy/hosting.env` along
+with the operator/privacy settings:
+
+```dotenv
+POWERALL_DOMAIN=energy.example.com
+POWERALL_GATEWAY_BIND_IP=192.168.1.50
+POWERALL_GATEWAY_PORT=8080
+POWERALL_TRUSTED_PROXY_CIDRS=192.168.1.10/32
+```
+
+The bind IP must belong to the Powerall Docker host. The trusted address must
+be the actual source IP that Caddy sees from NPM. For NPM on a different LAN
+host this is normally that host's LAN IP. For NPM in Docker on the same host,
+Docker routing may preserve its container IP or translate it: inspect the
+traffic rather than assuming the host IP. On the Powerall host, run
+`sudo tcpdump -ni any 'tcp dst port 8080'` while requesting this NPM Proxy Host,
+then trust the observed source as an exact `/32` (or IPv6 `/128`). If it is
+NPM's container IP, keep that address stable in NPM's existing network.
+Requests with a wrong trusted address receive 403.
+
+Prepare secrets and UID/ACL permissions as described under Deploy. Docker
+Compose 2.24.4 or later is required. Use this wrapper for every command:
+
+```sh
+./scripts/compose-npm-ip.sh config --quiet
+./scripts/compose-npm-ip.sh build --pull
+./scripts/compose-npm-ip.sh up -d
+./scripts/compose-npm-ip.sh ps
+./scripts/compose-npm-ip.sh exec -T api python -m powerall.manage invite
+```
+
+Configure the NPM Proxy Host for `energy.example.com` with scheme `http`,
+forward IP `192.168.1.50`, port `8080`, Cache Assets off, its managed certificate
+and Force SSL on. Preserve Host/Origin and normal forwarded headers. Point
+public DNS to NPM; expose only NPM's HTTPS ports publicly. Do not forward
+gateway port 8080 from your router. Restrict the gateway port to the NPM
+source at the host/network firewall where possible, taking Docker's published
+port firewall behaviour into account. Caddy also rejects untrusted peers.
+
+The NPM-to-Powerall hop is HTTP on your private network; use a shared trusted
+LAN or VPN for this route. NPM's access-log/privacy settings from the previous
+section also apply. Plain `docker compose up` would restore the standalone
+80/443 bindings, so always use the IP-mode wrapper for upgrades and maintenance.
+
 ## Scale and monitor
 
 For a single host:

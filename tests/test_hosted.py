@@ -53,6 +53,20 @@ class HostedTests(unittest.TestCase):
         self.assertEqual(self.call('/api/sync',{},token=self.token,extra={'HTTP_X_POWERALL_TOKEN':self.bob['csrf']})[0],403)
         self.assertEqual(self.call('/api/sync',{},token=self.token,extra={'HTTP_SEC_FETCH_SITE':'cross-site'})[0],403)
         self.assertEqual(self.call('/api/sync',{},token=self.token,origin='https://evil.example')[0],403)
+    def test_weekday_free_window_save_edit_and_export(self):
+        store,_=self.app.tenants.get(self.alice['user_id'])
+        store.execute("INSERT INTO meters(id,provider,provider_entity,resource_id,name) VALUES('weekly-meter','bright','weekly-entity','weekly-resource','Home')")
+        payload={'meter':'weekly-meter','label':'Sunday free','from':'2026-01-01','rate':'30','standing':'50',
+                 'windows':[{'start':'12:00','end':'14:00','rate':'0','days':[6]}]}
+        code,saved,_=self.call('/api/tariffs',payload,token=self.token)
+        self.assertEqual(code,201)
+        history=self.call('/api/tariffs?meter=weekly-meter',token=self.token)[1]['tariffs']
+        self.assertEqual(history[0]['windows'],payload['windows'])
+        payload['windows'][0]['end']='15:00'
+        self.assertEqual(self.call('/api/tariffs',{**payload,'id':saved['id']},token=self.token)[0],200)
+        exported=self.call('/api/account/export',token=self.token)[1]
+        self.assertEqual(exported['tariffs'][0]['windows'],payload['windows'])
+
     def test_cross_tenant_ids_cannot_read_edit_delete_or_export_data(self):
         store,_=self.app.tenants.get(self.alice['user_id'])
         store.execute("INSERT INTO meters(id,provider,provider_entity,resource_id,name) VALUES('private-meter','bright','private-entity','private-resource','Alice home')")

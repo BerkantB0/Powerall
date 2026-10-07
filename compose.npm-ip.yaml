@@ -1,0 +1,11 @@
+# NPM reaches the gateway through the Docker host's private/LAN IP.
+# Compose >= 2.24.4. No shared external Docker network is required.
+services:
+  gateway:
+    ports: !override
+      - "${POWERALL_GATEWAY_BIND_IP:?Set this Docker host's private IP}:${POWERALL_GATEWAY_PORT:-8080}:8080"
+    environment: !override
+      POWERALL_DOMAIN: ${POWERALL_DOMAIN:?Set the public hostname}
+      POWERALL_TRUSTED_PROXY_CIDRS: ${POWERALL_TRUSTED_PROXY_CIDRS:?Set the actual NPM source IP/CIDR}
+    volumes:
+      - ./deploy/Caddyfile.npm:/etc/caddy/Caddyfile:ro

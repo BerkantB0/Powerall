@@ -21,7 +21,7 @@ def number(value, label, maximum=10000):
 def validate_windows(windows):
     if not isinstance(windows, list) or len(windows) > 12:
         raise TariffError('Enter at most twelve time-of-use windows.')
-    result, occupied = [], set()
+    result, occupied = [], {False: set(), True: set()}
     for window in windows:
         if not isinstance(window, dict):
             raise TariffError('Invalid time-of-use window.')
@@ -31,11 +31,21 @@ def validate_windows(windows):
         start, end = minutes(window['start']), minutes(window['end'])
         if start == end:
             raise TariffError('A tariff window must have different start and end times.')
-        slots = {m for m in range(0, 1440, 30) if contains(m, start, end)}
-        if occupied & slots:
-            raise TariffError('Tariff windows cannot overlap.')
-        occupied |= slots
-        result.append({'start': window['start'], 'end': window['end'], 'rate': number(window.get('rate'), 'Window rate')})
+        days = window.get('days', list(range(7)))
+        if (not isinstance(days, list) or not days or
+                any(type(day) is not int or not 0 <= day <= 6 for day in days) or len(set(days)) != len(days)):
+            raise TariffError('Choose one or more distinct weekdays for each window.')
+        days = sorted(days)
+        specific = len(days) < 7
+        # Monday=0. An overnight window belongs to the day on which it starts.
+        slots = {(day * 1440 + offset) % 10080 for day in days
+                 for offset in range(start, end if end > start else end + 1440, 30)}
+        if occupied[specific] & slots:
+            raise TariffError('Windows with the same priority cannot overlap on the same weekdays.')
+        occupied[specific] |= slots
+        item = {'start': window['start'], 'end': window['end'], 'rate': number(window.get('rate'), 'Window rate')}
+        if specific: item['days'] = days
+        result.append(item)
     return result
 
 def minutes(value):
@@ -76,8 +86,11 @@ def interval_rate(tariff, instant):
     value = moment.hour * 60 + moment.minute
     selected = tariff['rate']
     off_peak = False
-    for window in tariff['windows']:
-        if contains(value, minutes(window['start']), minutes(window['end'])):
+    # Weekday-specific offers override daily windows regardless of saved order.
+    for window in sorted(tariff['windows'], key=lambda w: len(w.get('days', range(7))) == 7):
+        start, end = minutes(window['start']), minutes(window['end'])
+        day = (moment.weekday() - (start > end and value < end)) % 7
+        if day in window.get('days', range(7)) and contains(value, start, end):
             selected, off_peak = window['rate'], True
             break
     rate = Decimal(selected) * (Decimal('1.05') if tariff['vat'] == 'excluded' else Decimal(1))

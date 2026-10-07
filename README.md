@@ -70,9 +70,11 @@ Add manual rates from **Tariffs → Add historical tariff**. Enter:
 
 - A descriptive name and effective dates. Dates start at UK local midnight; the end date is **exclusive**. For example, an entry ending on 5 October covers the days through 4 October.
 - Standard rate in pence/kWh and standing charge in pence/day.
-- Optional off-peak windows, including windows crossing midnight. They must use half-hour boundaries and cannot overlap.
+- Optional off-peak windows, including windows crossing midnight. They must use half-hour boundaries. Choose Every day or a weekday such as Sunday; enter 0p/kWh for free hours. Weekday-specific windows override daily windows. Windows of the same priority cannot overlap on the same weekdays. An overnight window follows the weekday it starts on, using the selected tariff clock.
 - Whether windows follow UK local time (BST/GMT) or UTC/GMT all year.
 - Whether your entered prices include VAT. Excluded rates receive 5% domestic VAT once; included rates are used unchanged.
+
+Free-hour windows reduce usage cost to zero; the daily standing charge remains. Free consumption is included in the off-peak chart colour and share, with a Free electricity tooltip and `free` in the CSV rate-period column.
 
 Manual tariffs override Bright during their effective period. Overlapping manual entries are rejected. Use the pencil button to edit a manual entry, including dates, rates, VAT and off-peak windows. Saving recalculates estimates and preserves the entry. Deletion requires a confirmation in the interface. Bright records cannot be edited or deleted from the interface.
 
@@ -138,3 +140,5 @@ See `VERIFICATION.md` for the completed live checks and browser validation.
 See [HOSTING.md](HOSTING.md) for the invite-only Docker deployment with separate household accounts, authentication, encrypted Bright credentials, PostgreSQL household isolation, shared sessions, a durable import queue, separate workers, online encrypted backups and privacy controls. The local launcher remains unauthenticated and binds to loopback; it must not be exposed publicly. Hosted data lives in the PostgreSQL Docker volume; API and workers can scale independently. Account capacity is optional, with no default ceiling.
 
 For Nginx Proxy Manager, use the explicit `compose.npm.yaml` option and `scripts/compose-npm.sh` wrapper documented in [HOSTING.md](HOSTING.md#nginx-proxy-manager). NPM handles external HTTPS; the private Caddy gateway preserves the security policy and trusted client-IP handling.
+
+To forward from NPM to the Docker host's internal IP without a shared network, use `compose.npm-ip.yaml` and `scripts/compose-npm-ip.sh`. See [the internal-IP steps](HOSTING.md#npm-through-the-hosts-internal-ip-no-shared-network).

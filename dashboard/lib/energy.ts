@@ -47,7 +47,7 @@ export function readingsCsv(days: EnergyDay[]) {
     for (const slot of day.slots) {
       if (slot.state === "future") continue;
       rows.push([slot.start, day.date, slot.time, slot.zone, slot.kwh, slot.rate,
-        slot.rate === null ? "unknown" : slot.off_peak ? "off_peak" : "standard",
+        slot.rate === null ? "unknown" : slot.rate === 0 ? "free" : slot.off_peak ? "off_peak" : "standard",
         slot.cost, standingWritten ? null : day.standing,
         slot.state === "missing" ? "missing_reading" : slot.cost === null ? "missing_tariff" : "received",
         slot.tariff_label, day.warnings.join("; ")]);

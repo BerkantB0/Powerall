@@ -26,3 +26,10 @@ test('edit dates use UK midnight rather than the previous UTC date in summer', (
   assert.equal(ukDate('2026-06-30T23:00:00Z'), '2026-07-01');
   assert.equal(ukDate('2026-01-01T00:00:00Z'), '2026-01-01');
 });
+
+test('free electricity stays priced at zero and exports as free', () => {
+  const d = day([slot({ kwh: 2, rate: 0, cost: 0, off_peak: true })]);
+  assert.deepEqual(breakdown(d, 'usage'), { standard: 0, offPeak: 2, other: 0 });
+  assert.deepEqual(breakdown(d, 'cost'), { standard: 0, offPeak: 0, other: .5 });
+  assert.match(readingsCsv([d]), /"2","0","free","0","0.5","received"/);
+});
