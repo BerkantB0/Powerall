@@ -120,3 +120,11 @@ SQLite mode is local and single-household. Hosted mode supports separate househo
 - Browser verification succeeded using the actual IPv4 loopback listener at http://127.0.0.1:5173 after localhost navigation failed. Verified the Custom selector, native date entry and Apply range, exactly three daily bars for 1–3 October, daily drill-down and return to the saved custom selection. Downloaded CSV contained exactly 144 half-hours across those three dates.
 - Inspected desktop and phone-sized (390×844) layouts, confirmed no horizontal document overflow, and corrected clipped custom-chart date labels. Private screenshots remain in ignored data/custom-period-desktop.png and data/custom-period-mobile.png; viewport override was reset.
 - Documented upgrade compatibility, backup/configuration preservation, API-before-frontend ordering, brief recreation downtime and rollback in HOSTING.md. No schema migration, new secrets or environment settings are needed. The remote deployment was not changed.
+
+## Chart time-label alignment correction
+
+- Replaced evenly spread axis labels with grid cells corresponding to their actual bar indices, sharing gap and padding variables with both half-hour and daily bars. Day labels use UK clock times at four-hour boundaries; every chart includes its final interval/date (23:30 for day charts).
+- Live browser geometry checks on the day chart and a 390×844 mobile viewport showed label centres within 0.05 CSS pixels of the corresponding bar centres. Verified 46- and 50-half-hour clock-change days; the 50-slot day retained 00:00/04:00/08:00/12:00/16:00/20:00/23:30 ticks at their actual indices. Weekly labels aligned within 0.01 pixels.
+- Fixed an existing mobile toolbar overflow exposed by the four period buttons by allowing the date controls to wrap. The mobile document no longer overflowed the viewport; the temporary viewport override was reset. Proof screenshot is stored privately in ignored data/chart-axis-fixed.png.
+- TypeScript, lint and all five presentation tests passed; the final production Docker frontend build passed. Rebuilt/recreated only the local hosted frontend. No backend, schema, secrets or household records were changed by this correction.
+- HOSTING.md includes frontend-only rebuild/recreation and rollback instructions using the deployed NPM host-IP wrapper. The remote deployment was not modified.

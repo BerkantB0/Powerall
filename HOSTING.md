@@ -361,3 +361,14 @@ A short interruption is possible during single-host container recreation. Verify
 sign-in, an existing calendar view, a custom range, daily drill-down and CSV export.
 Do not use `down -v`. A rollback to the prior API/frontend images needs no database
 rollback for this release; keep the same secrets and configuration.
+
+## Upgrade: chart time-label alignment
+
+This is a frontend-only correction. It aligns axis labels with their actual bars and includes the final interval/date. No API, database, secret or environment changes are needed. Copy the updated source while preserving deployment configuration and private data, then use the deployed NPM host-IP wrapper:
+
+```sh
+./scripts/compose-npm-ip.sh build frontend
+./scripts/compose-npm-ip.sh up -d --no-deps frontend
+```
+
+Refresh the browser after the frontend is healthy. Existing API/worker/database containers can keep running. No persistent volumes should be removed. The previous frontend image can be restored without a data migration.
