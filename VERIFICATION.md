@@ -110,3 +110,13 @@ SQLite mode is local and single-household. Hosted mode supports separate househo
 
 - Added `--no-control-socket` to the API image's Gunicorn command. The optional `gunicornc` socket is unused by Powerall and otherwise attempts to write under `/home/powerall` in a read-only container.
 - Rebuilt the API image and tested its actual command with a disposable fixture WSGI app: HTTP 200, clean shutdown and no control-socket/read-only errors. The fixture retained UID 10001, a read-only root, dropped capabilities, no-new-privileges, a temporary `/tmp` and no external network. It used no household data or credentials and its container was removed.
+
+## Custom dashboard periods — 7 October 2026
+
+- Added inclusive custom start/end dates (1–366 days, ending no later than today), daily charts/drill-down and existing half-hour CSV exports. Custom comparisons use the immediately preceding equal-length calendar range, matching elapsed UK time for a range ending today. Existing day/week/month requests remain compatible.
+- General backend suite: 63 passed, 11 separately configured PostgreSQL tests skipped. Six new cases cover inclusive bounds/standing charges, preceding-period totals, current partial comparisons, clock changes/missing prices, invalid/oversized/future requests and hosted household isolation. All five presentation tests passed.
+- Frontend TypeScript, lint and production Docker builds passed. Removed a duplicate generated `.next/types/routes.d 2.ts` file that had caused a local-only TypeScript conflict; clean Docker type checking also passed.
+- Restarted the local SQLite preview with the new API, rebuilt the local hosted stack using its persistent database/keys, and verified the three-day local API response and HTTPS login both returned HTTP 200.
+- Browser verification succeeded using the actual IPv4 loopback listener at http://127.0.0.1:5173 after localhost navigation failed. Verified the Custom selector, native date entry and Apply range, exactly three daily bars for 1–3 October, daily drill-down and return to the saved custom selection. Downloaded CSV contained exactly 144 half-hours across those three dates.
+- Inspected desktop and phone-sized (390×844) layouts, confirmed no horizontal document overflow, and corrected clipped custom-chart date labels. Private screenshots remain in ignored data/custom-period-desktop.png and data/custom-period-mobile.png; viewport override was reset.
+- Documented upgrade compatibility, backup/configuration preservation, API-before-frontend ordering, brief recreation downtime and rollback in HOSTING.md. No schema migration, new secrets or environment settings are needed. The remote deployment was not changed.

@@ -334,3 +334,30 @@ Stopping preserves local PostgreSQL data for the next start. Do not delete the l
 ## Gunicorn control socket in read-only containers
 
 The API image starts Gunicorn with `--no-control-socket`. Powerall manages API processes through Docker rather than `gunicornc`; this avoids Gunicorn attempting to create its default socket under the nonexistent, read-only `/home/powerall`. Keep `read_only: true` enabled. For an older deployed image reporting `Control server error: Read-only file system`, copy the updated `deploy/Dockerfile.api`, then run `./scripts/compose-npm-ip.sh build api` and `./scripts/compose-npm-ip.sh up -d api` (or the corresponding wrapper for your deployment mode).
+
+## Upgrade: custom dashboard periods
+
+This release adds `view=custom&date=YYYY-MM-DD&end=YYYY-MM-DD` to the dashboard API.
+Both input dates are included; the response's existing `to` field remains exclusive.
+Existing day/week/month requests and response fields continue to work. There are no
+database schema changes, new secrets or required environment variables. Existing
+accounts, sessions, provider connections, readings and tariffs are preserved.
+
+Before upgrading, take an encrypted backup using the existing backup instructions.
+Copy the updated source while excluding `.env`, `deploy/hosting.env`, `deploy/secrets/`,
+`data/` and `backups/`; keep the current database volumes and keys. For the deployed
+NPM host-IP mode, run:
+
+```sh
+./scripts/compose-npm-ip.sh config --quiet
+./scripts/compose-npm-ip.sh build api frontend
+./scripts/compose-npm-ip.sh up -d
+./scripts/compose-npm-ip.sh ps
+```
+
+Refresh the browser after the services are healthy. If deploying images separately,
+update the API before the frontend: the old API cannot serve custom-range requests.
+A short interruption is possible during single-host container recreation. Verify
+sign-in, an existing calendar view, a custom range, daily drill-down and CSV export.
+Do not use `down -v`. A rollback to the prior API/frontend images needs no database
+rollback for this release; keep the same secrets and configuration.

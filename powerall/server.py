@@ -166,7 +166,10 @@ def make_api(store, sync, token, port, hosted=None):
                     # Bound requests so malformed clients cannot exhaust memory.
                     if not re.fullmatch(r'20\d{2}-\d{2}-\d{2}', anchor):
                         raise ValueError('Choose a date between 2000 and 2099.')
-                    self.send(200, dashboard(self.store, meter, view, anchor, time.time()))
+                    until = query.get('end', [None])[0]
+                    if view == 'custom' and (not until or not re.fullmatch(r'20\d{2}-\d{2}-\d{2}', until)):
+                        raise ValueError('Choose an end date between 2000 and 2099.')
+                    self.send(200, dashboard(self.store, meter, view, anchor, time.time(), until))
                 elif route.path == '/api/tariffs':
                     meter = query.get('meter', [''])[0]
                     items = self.store.tariffs(meter)

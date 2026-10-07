@@ -53,6 +53,16 @@ class HostedTests(unittest.TestCase):
         self.assertEqual(self.call('/api/sync',{},token=self.token,extra={'HTTP_X_POWERALL_TOKEN':self.bob['csrf']})[0],403)
         self.assertEqual(self.call('/api/sync',{},token=self.token,extra={'HTTP_SEC_FETCH_SITE':'cross-site'})[0],403)
         self.assertEqual(self.call('/api/sync',{},token=self.token,origin='https://evil.example')[0],403)
+    def test_custom_period_keeps_household_isolation(self):
+        store,_=self.app.tenants.get(self.alice['user_id'])
+        store.execute("INSERT INTO meters(id,provider,provider_entity,resource_id,name) VALUES('range-meter','bright','range-entity','range-resource','Home')")
+        route='/api/dashboard?meter=range-meter&view=custom&date=2026-01-01&end=2026-01-03'
+        code,result,_=self.call(route,token=self.token)
+        self.assertEqual(code,200)
+        self.assertEqual(len(result['days']),3)
+        self.assertEqual(self.call(route,token=self.other)[0],404)
+        self.assertEqual(self.call(route)[0],401)
+
     def test_weekday_free_window_save_edit_and_export(self):
         store,_=self.app.tenants.get(self.alice['user_id'])
         store.execute("INSERT INTO meters(id,provider,provider_entity,resource_id,name) VALUES('weekly-meter','bright','weekly-entity','weekly-resource','Home')")

@@ -260,6 +260,41 @@ class StoredTests(unittest.TestCase):
     def fill(self,start,end):
         with self.store.connection() as db:
             db.executemany('INSERT INTO readings VALUES(?,?,?,?)',[('m',s,'1',0) for s in range(start,end,HALF_HOUR)])
+    def test_custom_completed_range_is_inclusive_and_compares_equal_days(self):
+        self.fill(date_bounds('2026-10-01')[0],date_bounds('2026-10-07')[0])
+        self.store.upsert_tariff(tariff(windows=[]))
+        result=dashboard(self.store,'m','custom','2026-10-04',parse_instant('2026-10-08T00:00Z'),'2026-10-06')
+        self.assertEqual([d['date'] for d in result['days']],['2026-10-04','2026-10-05','2026-10-06'])
+        self.assertEqual(result['to'],'2026-10-07')
+        self.assertEqual(result['comparison']['from'],'2026-10-01')
+        self.assertEqual(result['comparison']['to'],'2026-10-04')
+        self.assertEqual(result['summary']['expected'],144)
+        self.assertEqual(result['summary']['standing'],1.5)
+        self.assertEqual(result['comparison']['usage_change_percent'],0)
+    def test_custom_current_range_compares_matching_elapsed_time(self):
+        now=parse_instant('2026-10-06T12:00Z')
+        self.fill(date_bounds('2026-09-30')[0],now//1800*1800)
+        result=dashboard(self.store,'m','custom','2026-10-04',now,'2026-10-06')
+        self.assertTrue(result['comparison']['matched_elapsed_period'])
+        self.assertEqual(result['summary']['expected'],result['comparison']['summary']['expected'])
+        self.assertEqual(result['comparison']['usage_change_percent'],0)
+    def test_custom_clock_change_and_missing_prices(self):
+        start,end=date_bounds('2026-10-25')
+        self.fill(start,end)
+        result=dashboard(self.store,'m','custom','2026-10-25',end+86400,'2026-10-25')
+        self.assertEqual(result['summary']['expected'],50)
+        self.assertEqual(result['summary']['unpriced'],50)
+        self.assertIsNone(result['summary']['estimated_cost'])
+        self.assertIsNone(result['comparison']['usage_change_percent'])
+    def test_custom_range_rejects_invalid_unbounded_or_future_dates(self):
+        now=parse_instant('2026-10-07T12:00Z')
+        for first,last in [('2026-10-01',None),('2026-10-06','2026-10-05'),
+                           ('2025-01-01','2026-01-02'),('2026-10-07','2026-10-08'),
+                           ('2026-02-30','2026-03-01'),('1999-12-31','2000-01-01')]:
+            with self.assertRaises(ValueError): dashboard(self.store,'m','custom',first,now,last)
+        result=dashboard(self.store,'m','custom','2025-01-01',now,'2026-01-01')
+        self.assertEqual(len(result['days']),366)
+
     def test_current_week_matches_elapsed_previous_week(self):
         now=parse_instant('2026-10-06T12:00:00Z')
         self.fill(date_bounds('2026-09-28')[0],now//1800*1800)
@@ -413,6 +448,13 @@ class ApiTests(unittest.TestCase):
         for identifier in ('provider','other','missing'):
             self.assertEqual(self.call('/api/tariffs',{**payload,'id':identifier})[0],404)
         self.assertEqual(self.store.tariffs('m')[0]['source'],'bright')
+
+    def test_custom_range_api(self):
+        code,result=self.call('/api/dashboard?meter=m&view=custom&date=2026-01-01&end=2026-01-03')
+        self.assertEqual(code,200)
+        self.assertEqual(len(result['days']),3)
+        for suffix in ('','&end=bad','&end=2025-12-31','&end=2028-01-01'):
+            self.assertEqual(self.call('/api/dashboard?meter=m&view=custom&date=2026-01-01'+suffix)[0],400)
 
     def test_invalid_requests_rejected(self):
         for body in ({'days':True},{'days':0},{'days':731},{'days':'90'}):

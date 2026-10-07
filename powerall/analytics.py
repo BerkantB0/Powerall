@@ -74,11 +74,13 @@ def totals(days):
         'off_peak_share': round(sum(d['off_peak_kwh'] for d in relevant) / kwh * 100, 2) if kwh else None,
         'warnings': sorted({w for d in relevant for w in d['warnings']})}
 
-def dashboard(store, meter_id, view, anchor, now):
-    first, last, previous_first = period_bounds(view, anchor)
+def dashboard(store, meter_id, view, anchor, now, until=None):
+    first, last, previous_first = period_bounds(view, anchor, until)
     # Compare completed periods in full. Current week/month use matching elapsed
     # local days and wall-clock time, so partial periods don't imply false savings.
     today = datetime.fromtimestamp(now, UK).date()
+    if view == 'custom' and last > today + timedelta(days=1):
+        raise ValueError('Custom periods cannot end after today.')
     comparison_last = first
     previous_cutoff = now
     if first <= today < last:

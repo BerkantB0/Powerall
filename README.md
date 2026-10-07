@@ -84,6 +84,8 @@ Bright does not explicitly identify VAT or tariff window clock conventions in th
 
 ## Time, missing data and comparisons
 
+Select **Custom** to choose an inclusive start/end date range of up to 366 days, ending no later than today, then press **Apply range**. Custom charts show daily totals, can scroll horizontally for longer ranges, and let you tap a day to inspect its half-hours. CSV exports cover the selected dates. Comparisons use the immediately preceding range of the same number of calendar days; a range ending today compares matching elapsed days and UK wall-clock time. Reading and tariff gaps remain explicit.
+
 Readings are stored as UTC interval-start timestamps, with a half-open `[start, end)` convention. Days and calendar periods are grouped in `Europe/London`. Spring clock-change days have 46 half-hours and autumn days have 50. Repeated autumn times are labelled separately with BST/GMT.
 
 Day charts colour off-peak half-hours separately. Week and month bars stack standard and off-peak usage, with unknown tariff usage shown separately. Cost bars separate usage costs from standing charges.
