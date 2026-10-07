@@ -128,3 +128,10 @@ SQLite mode is local and single-household. Hosted mode supports separate househo
 - Fixed an existing mobile toolbar overflow exposed by the four period buttons by allowing the date controls to wrap. The mobile document no longer overflowed the viewport; the temporary viewport override was reset. Proof screenshot is stored privately in ignored data/chart-axis-fixed.png.
 - TypeScript, lint and all five presentation tests passed; the final production Docker frontend build passed. Rebuilt/recreated only the local hosted frontend. No backend, schema, secrets or household records were changed by this correction.
 - HOSTING.md includes frontend-only rebuild/recreation and rollback instructions using the deployed NPM host-IP wrapper. The remote deployment was not modified.
+
+## iPhone Home Screen icon
+
+- Added an opaque 180×180 PNG derived from the existing SVG lightning logo, with the same colours and shape. The PNG uses a square background so iOS can apply its own corner mask. Root metadata advertises the Apple touch icon across dashboard, login and privacy pages; the existing browser favicon remains available.
+- Visually inspected the PNG and verified its dimensions, PNG format and lack of transparency. Local dashboard and login HTML both contain the expected Apple touch-icon link; the icon endpoint returned HTTP 200 with image/png and the correct dimensions.
+- TypeScript, lint and production Docker frontend build passed. A disposable read-only, network-disabled container verified the packaged PNG and prerendered dashboard/login metadata in the final image; it was removed afterward.
+- HOSTING.md documents frontend-only deployment and removal/re-addition of an existing iPhone Home Screen shortcut. No API, database, configuration or secret changes are required. The remote deployment was not modified; installation on a physical iPhone has not been tested here.

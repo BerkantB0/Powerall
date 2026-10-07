@@ -372,3 +372,14 @@ This is a frontend-only correction. It aligns axis labels with their actual bars
 ```
 
 Refresh the browser after the frontend is healthy. Existing API/worker/database containers can keep running. No persistent volumes should be removed. The previous frontend image can be restored without a data migration.
+
+## Upgrade: iPhone Home Screen icon
+
+This frontend-only change adds an opaque 180×180 PNG of the existing lightning logo and an Apple touch-icon link on every page, including login. No migration, environment changes or new secrets are required. Preserve deployment configuration and data, then run:
+
+```sh
+./scripts/compose-npm-ip.sh build frontend
+./scripts/compose-npm-ip.sh up -d --no-deps frontend
+```
+
+Verify `/apple-touch-icon.png` loads through your public hostname. On iPhone, remove the old Home Screen shortcut, reopen Powerall in Safari and use Share → Add to Home Screen to pick up the icon. Existing backend services and persistent volumes remain in place; rollback requires only the previous frontend image.
