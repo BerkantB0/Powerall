@@ -105,3 +105,8 @@ SQLite mode is local and single-household. Hosted mode supports separate househo
 - Five new backend cases cover Sunday boundaries, normal rates on other days, daily-window precedence, zero VAT-adjusted costs, overnight rollover, UK clock changes, UTC weekdays, validation and persistence. The 40-test SQLite/backend suite passed. The hosted suite passed all 17 tests, including saving/editing/exporting weekday windows. The 11 separately configured PostgreSQL integration tests were skipped in the general suite, not rerun for this change.
 - All five presentation tests passed, including a new free-rate CSV/stacked-chart case. TypeScript, lint and the hosted frontend/API Docker builds passed. Local hosted services were updated after a transient Docker secret-mount I/O failure resolved.
 - The in-app browser's CDP commands timed out on both existing and fresh local tabs, so the changed form has not been visually verified in this session. No guessed Sunday rates or hours were saved to the user's household.
+
+## Gunicorn read-only startup correction
+
+- Added `--no-control-socket` to the API image's Gunicorn command. The optional `gunicornc` socket is unused by Powerall and otherwise attempts to write under `/home/powerall` in a read-only container.
+- Rebuilt the API image and tested its actual command with a disposable fixture WSGI app: HTTP 200, clean shutdown and no control-socket/read-only errors. The fixture retained UID 10001, a read-only root, dropped capabilities, no-new-privileges, a temporary `/tmp` and no external network. It used no household data or credentials and its container was removed.
