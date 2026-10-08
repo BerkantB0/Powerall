@@ -14,3 +14,15 @@
 .x-axis>span{justify-self:center;white-space:nowrap}
 
 @media(max-width:600px){.period-toolbar{flex-wrap:wrap}}
+
+.daily-bars{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+
+/* Keep scale labels outside the plot and use the remaining phone width for bars. */
+@media(max-width:600px){
+  .chart-card{padding-left:10px;padding-right:10px}
+  .chart-layout{gap:4px}
+  .y-axis{width:28px;color:#68766f}
+  .y-axis span{white-space:nowrap}
+  .custom-chart .y-axis{background:#fff;box-shadow:4px 0 #fff}
+  .chart-plot:not(.daily-plot){--bar-gap:1px}
+}

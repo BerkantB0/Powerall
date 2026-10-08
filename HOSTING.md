@@ -383,3 +383,14 @@ This frontend-only change adds an opaque 180×180 PNG of the existing lightning 
 ```
 
 Verify `/apple-touch-icon.png` loads through your public hostname. On iPhone, remove the old Home Screen shortcut, reopen Powerall in Safari and use Share → Add to Home Screen to pick up the icon. Existing backend services and persistent volumes remain in place; rollback requires only the previous frontend image.
+
+## Upgrade: daily chart previews
+
+Week, month and custom daily-bar previews now show usage and estimated cost together on hover or keyboard focus. On touchscreens, hold for 450 ms, then slide across days; release retains the preview and suppresses daily navigation. A quick tap still opens that day. Swipes that begin before the hold activates retain page/custom-chart scrolling. Phone chart cards align with the surrounding cards. Scale labels sit in a separate left gutter without overlapping bars; the plot extends to the normal card padding on the right. Tighter half-hour gaps retain wider bars. This is frontend-only, with no API, schema or configuration changes. Preserve deployment secrets and data when copying updated source, then run:
+
+```sh
+./scripts/compose-npm-ip.sh build frontend
+./scripts/compose-npm-ip.sh up -d --no-deps frontend
+```
+
+Refresh the browser and verify previews in each period view and click-to-open. On iPhone, also verify a stationary hold/release, sliding across bars, a quick tap, vertical page scrolling and horizontal scrolling of a long custom period. Keep persistent volumes and existing backend services; rollback uses the previous frontend image without a migration.

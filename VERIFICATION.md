@@ -135,3 +135,39 @@ SQLite mode is local and single-household. Hosted mode supports separate househo
 - Visually inspected the PNG and verified its dimensions, PNG format and lack of transparency. Local dashboard and login HTML both contain the expected Apple touch-icon link; the icon endpoint returned HTTP 200 with image/png and the correct dimensions.
 - TypeScript, lint and production Docker frontend build passed. A disposable read-only, network-disabled container verified the packaged PNG and prerendered dashboard/login metadata in the final image; it was removed afterward.
 - HOSTING.md documents frontend-only deployment and removal/re-addition of an existing iPhone Home Screen shortcut. No API, database, configuration or secret changes are required. The remote deployment was not modified; installation on a physical iPhone has not been tested here.
+
+## Daily chart number previews — 8 October 2026
+
+- Week, month and custom detail rows now show daily kWh and estimated total cost together, independent of the selected chart metric. Missing readings/costs and future days remain explicitly labelled. The hint explains hover versus click/tap. Existing mouse-enter and keyboard-focus handlers only select the preview; click retains daily drill-down.
+- Live browser keyboard-focus checks in all three views displayed daily numbers without switching periods. Verified both metrics in Custom and confirmed clicking a weekly day still opens its half-hours. Inspected the rendered custom cost preview; private proof is saved in ignored data/daily-preview.png. Direct mouse hovering was not exercised by the available browser interaction API; its existing selection-only handler was inspected.
+- TypeScript, lint and the standalone production frontend build passed. The Docker build could not run because Docker Desktop was stopped; no container or remote deployment was changed. HOSTING.md records frontend-only rollout/rollback with the NPM host-IP wrapper. No API, schema, secrets or household data changes are required.
+
+## Touch hold-and-slide previews — 8 October 2026
+
+- Added native touch listeners to daily charts: a 450 ms hold activates preview, sliding follows the nearest daily bar, and release retains the numbers without opening a day. Quick taps preserve drill-down. Movement before activation cancels the hold and allows normal scrolling. Multitouch/cancellation and view changes clear pending gestures; listeners and timers are removed on cleanup. Touch move/end prevention is scoped to active previews, using explicit non-passive listeners. Keyboard activation remains available.
+- Five gesture regression tests passed, covering quick tap, stationary hold, sliding/gaps, release click suppression, subsequent taps, vertical/horizontal swipes, cancellation, multitouch, cleanup and keyboard clicks. All five existing presentation tests also passed. TypeScript, lint and the standalone production build passed.
+- Browser inspection confirmed the updated hint, daily numbers and desktop click-to-open. Private proof is in ignored data/touch-preview.png. The available desktop browser API cannot generate real touch gestures; physical iPhone Safari/Home Screen behaviour, scrolling and hold/slide remain to be verified on device. No Docker rebuild or remote deployment is claimed for this change.
+- README.md describes the gesture; HOSTING.md extends the frontend-only rollout with phone checks and rollback. No API, schema, secrets or household data changes are required.
+
+## Wider mobile charts — 8 October 2026
+
+- On screens up to 600 px, chart cards extend 12 px into each existing page margin, use 10 px horizontal padding, a 28 px left-axis gutter and a 4 px plot gap. Half-hour gaps reduce from 2 px to 1 px; daily gaps and shared axis/bar alignment are retained. Desktop spacing is unchanged.
+- Live phone-size inspection at a 390×844 viewport measured plot width increasing from 270 to 307 CSS px and half-hour bar width from 3.66 to 5.41 px (about 48% wider). Day-label centres remained within 0.05 px of their bar centres. Monthly cost labels fitted within the smaller gutter. No horizontal page overflow occurred at 390 or 320 px viewport widths; the temporary viewport override was reset.
+- Visually inspected the day chart; private proof is saved in ignored data/mobile-chart-width.png. Lint and the production build (including TypeScript validation) passed. The existing frontend-only rollout/rollback section covers this CSS change; no remote deployment or household data was modified.
+
+## Balanced mobile chart layout — 8 October 2026
+
+- Supersedes the preceding wider-card layout: phone chart cards now follow the same page margins as surrounding cards. The scale labels overlay the plot above grid lines, with a white backing and no pointer interception. The redundant zero label is hidden on phones. Long custom charts retain a sticky overlay scale; an extra 9 px of top space prevents their top label from clipping without reducing bar height. Half-hour gaps remain 1 px; desktop layout is unchanged.
+- At 390×844, browser geometry confirmed equal 14 px plot insets, chart/insight-card left edges both at 19 px, a 309 px plot and 5.45 px half-hour bars. Visually inspected usage and checked cost/custom layouts. A 36-day custom range scrolled within the card with its top scale label visible; no page overflow at 390 or 320 px. The viewport override was reset.
+- Private proof is in ignored data/mobile-chart-balanced.png. Lint and the final production build, including TypeScript validation, passed. HOSTING.md describes the final layout under the same frontend-only rollout/rollback; no migration, configuration changes or remote deployment are required or performed.
+
+## Separate mobile scale gutter — 8 October 2026
+
+- Corrects the preceding inset-label layout, which obscured bars. Removed the scale overlay and restored normal-flow labels, including zero. Mobile chart cards retain the surrounding card margins with 10 px inner padding; the 28 px left axis plus 4 px gap is balanced by 32 px of space on the right. Half-hour gaps remain 1 px. Custom charts keep an opaque sticky scale gutter during horizontal scrolling.
+- Visually inspected the corrected day chart. Browser geometry measured equal 43 px plot insets, a minimum 4 px gap between every scale label and the plot, and 4.25 px half-hour bars at 390×844 (versus 3.66 px before these mobile changes). Monthly cost charts retained the same label separation/equal insets with no page overflow at 320, 390 and 430 px viewport widths. Inspected a 36-day custom chart after scrolling to its end; its opaque scale gutter kept numbers readable. Temporary viewport override was reset.
+- Lint and the production build including TypeScript validation passed. Private proof is in ignored data/mobile-chart-clear-axis.png. HOSTING.md now describes the corrected final layout; deployment remains frontend-only with no migration or secret changes. The remote deployment was not modified.
+
+## Remove excess right gutter — 8 October 2026
+
+- Removed the extra 32 px mobile right margin while retaining the separate 28 px left scale gutter and 4 px gap. Chart cards remain aligned with surrounding cards; the right edge now uses only normal card padding.
+- Visually inspected the day chart at 390×844. Plot width increased from 251 to 283 CSS px; labels retained 4 px clearance from bars, right inset was 11 px including the border, and the page did not overflow. Private proof is in ignored data/mobile-chart-final-spacing.png; viewport override reset. Lint and whitespace checks passed. This CSS-only adjustment uses the existing frontend-only rollout and requires no migration or configuration changes.

@@ -2,6 +2,8 @@
 
 A mobile-friendly electricity dashboard powered by Bright / Hildebrand Glowmarkt, with a single-household SQLite mode and an invite-only, multi-household Docker deployment.
 
+In week, month and custom charts, hover or keyboard focus previews daily usage and estimated cost. On touchscreens, hold a bar for about half a second, then slide across days to preview their numbers. Release to keep the preview; a quick tap opens the day's half-hours. Swiping without holding scrolls normally, including wide custom charts.
+
 It discovers electricity meters, imports half-hourly readings, keeps a local history, overlays tariff windows, and estimates costs. Day, week and month views show reading coverage, unknown prices and comparisons. Historical tariffs can be entered from a bill, including off-peak windows, effective dates, VAT and UK/UTC clock conventions.
 
 ## Test the full account flow locally
