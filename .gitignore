@@ -17,3 +17,5 @@ dashboard/.env*
 deploy/secrets/
 deploy/hosting.env
 backups/
+
+.upgrade.lock/
