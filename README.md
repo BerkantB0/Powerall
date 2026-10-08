@@ -146,3 +146,7 @@ See [HOSTING.md](HOSTING.md) for the invite-only Docker deployment with separate
 For Nginx Proxy Manager, use the explicit `compose.npm.yaml` option and `scripts/compose-npm.sh` wrapper documented in [HOSTING.md](HOSTING.md#nginx-proxy-manager). NPM handles external HTTPS; the private Caddy gateway preserves the security policy and trusted client-IP handling.
 
 To forward from NPM to the Docker host's internal IP without a shared network, use `compose.npm-ip.yaml` and `scripts/compose-npm-ip.sh`. See [the internal-IP steps](HOSTING.md#npm-through-the-hosts-internal-ip-no-shared-network).
+
+### Refresh failures
+
+Hosted refreshes distinguish queued work, active imports and scheduled failure retries. Failed jobs retry automatically after 1–15 minutes. Use **Retry now** or Refresh data to bring a failed retry forward; a short countdown explains the existing one-minute cooldown. Your saved readings remain available. Retrying preserves a pending historical range unless you explicitly select another range. Concurrent imports and duplicate fresh queue entries remain blocked, and Bright's own rate limits still apply.

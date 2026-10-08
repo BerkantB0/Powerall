@@ -9,6 +9,9 @@ from .postgres import PostgresStore
 from .tenants import EncryptedBright
 from .sync import SyncService
 
+def retry_delay(previous_failures):
+    return min(900, 60 * 2 ** min(previous_failures, 4))
+
 class HouseholdLock:
     def __init__(self, database, user_id):
         self.database = database
@@ -45,8 +48,11 @@ class QueuedSync:
     def trigger(self, days=None):
         with self.database.connection() as db:
             result = db.execute('''INSERT INTO import_jobs(user_id,days,state,available_at) VALUES(?,?,'queued',?)
-                ON CONFLICT(user_id) DO UPDATE SET days=excluded.days,state='queued',available_at=excluded.available_at,attempts=0,owner=NULL
-                WHERE import_jobs.state='idle' RETURNING user_id''', (self.user_id,days,int(time.time())))
+                ON CONFLICT(user_id) DO UPDATE SET
+                    days=CASE WHEN import_jobs.state='queued' THEN COALESCE(excluded.days,import_jobs.days) ELSE excluded.days END,
+                    state='queued',available_at=excluded.available_at,attempts=0,owner=NULL
+                WHERE import_jobs.state='idle' OR (import_jobs.state='queued' AND import_jobs.attempts>0)
+                RETURNING user_id''', (self.user_id,days,int(time.time())))
             return result.fetchone() is not None
     def schedule(self): pass  # Scheduling is done exclusively by worker processes.
 
@@ -102,6 +108,10 @@ class Worker:
     def schedule(self):
         now=int(time.time())
         with self.database.connection() as db:
+            # Repair deferred retries written by older workers without touching
+            # active ownership, historical ranges or successful refresh schedules.
+            db.execute("UPDATE import_jobs SET available_at=? WHERE state='queued' AND attempts>0 AND available_at>?",
+                       (now+900,now+900))
             db.execute('''INSERT INTO import_jobs(user_id,available_at)
                 SELECT id,? FROM users WHERE credentials IS NOT NULL
                 ON CONFLICT(user_id) DO UPDATE SET state='queued'
@@ -130,10 +140,11 @@ class Worker:
                 sync._lock.acquire()
                 sync._run(job['days'])
                 failed=store.sync_state()['run']['status']=='failed'
-                delay=min(3600,60 * 2 ** min(job['attempts'],6)) if failed else int(self.refresh_hours*3600)
+                delay=retry_delay(job['attempts']) if failed else int(self.refresh_hours*3600)
                 with self.database.connection() as db:
-                    db.execute('UPDATE import_jobs SET state=?,available_at=?,days=?,owner=NULL WHERE user_id=? AND owner=?',
-                        ('queued' if failed else 'idle',int(time.time())+delay,(job['days'] or self.initial_days) if failed else None,user_id,owner))
+                    db.execute('UPDATE import_jobs SET state=?,available_at=?,days=?,attempts=?,owner=NULL WHERE user_id=? AND owner=?',
+                        ('queued' if failed else 'idle',int(time.time())+delay,(job['days'] or self.initial_days) if failed else None,
+                         job['attempts']+1 if failed else 0,user_id,owner))
                 return True
             finally: lock.release()
         return False

@@ -83,6 +83,39 @@ class PostgresTests(unittest.TestCase):
             job=db.execute('SELECT * FROM import_jobs WHERE user_id=?',(user,)).fetchone()
         self.assertEqual(job['state'],'queued');self.assertGreater(job['available_at'],time.time());self.assertEqual(job['days'],1)
         self.assertEqual(self.stores[0].sync_state()['run']['status'],'failed')
+        self.assertTrue(self.stores[0].sync_state()['queue']['retry'])
+        self.assertLessEqual(job['available_at']-time.time(),60)
+        # A manual refresh brings an already-deferred historical retry forward.
+        with self.accounts.db() as db:
+            db.execute('UPDATE import_jobs SET available_at=? WHERE user_id=?',(int(time.time())+86400,user))
+        Worker(self.accounts).schedule()
+        with self.accounts.db() as db:
+            repaired=db.execute('SELECT * FROM import_jobs WHERE user_id=?',(user,)).fetchone()
+        self.assertLessEqual(repaired['available_at']-time.time(),900)
+        self.assertEqual(repaired['days'],1)
+        self.assertTrue(queue.trigger())
+        self.assertFalse(queue.trigger())
+        with self.accounts.db() as db:
+            retry=db.execute('SELECT * FROM import_jobs WHERE user_id=?',(user,)).fetchone()
+        self.assertEqual(retry['days'],1);self.assertEqual(retry['attempts'],0)
+        self.assertLessEqual(retry['available_at'],time.time())
+        self.assertFalse(self.stores[0].sync_state()['queue']['retry'])
+        with patch('powerall.jobs.LimitedBright',Provider):
+            self.assertTrue(Worker(self.accounts).once())
+        with self.accounts.db() as db:
+            completed=db.execute('SELECT * FROM import_jobs WHERE user_id=?',(user,)).fetchone()
+        self.assertEqual(completed['state'],'idle');self.assertEqual(completed['attempts'],0)
+        # Old releases accumulated attempts across successes: that alone is not
+        # evidence that a newly scheduled refresh is a failed retry.
+        with self.accounts.db() as db:
+            db.execute("UPDATE import_jobs SET state='queued',attempts=4 WHERE user_id=?",(user,))
+        self.assertFalse(self.stores[0].sync_state()['queue']['retry'])
+        # Running imports must never lose their ownership token to a manual retry.
+        with self.accounts.db() as db:
+            db.execute("UPDATE import_jobs SET state='running',attempts=3,owner='fixture-owner' WHERE user_id=?",(user,))
+        self.assertFalse(queue.trigger(30))
+        with self.accounts.db() as db:
+            self.assertEqual(db.execute('SELECT owner FROM import_jobs WHERE user_id=?',(user,)).fetchone()['owner'],'fixture-owner')
     def test_disconnect_delete_lock_and_erasure_cascade(self):
         from powerall.jobs import SharedTenants,HouseholdLock,QueuedSync
         from powerall.auth import AuthError

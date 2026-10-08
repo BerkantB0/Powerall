@@ -83,8 +83,11 @@ class PostgresStore(Store):
     def sync_state(self):
         state=super().sync_state()
         with self.database.connection() as db:
-            job=db.execute("SELECT state,available_at FROM import_jobs WHERE user_id=? AND state<>'idle'",(self.tenant,)).fetchone()
+            job=db.execute("SELECT state,available_at,attempts FROM import_jobs WHERE user_id=? AND state<>'idle'",(self.tenant,)).fetchone()
         state['queue']=dict(job) if job else None
+        if state['queue']:
+            state['queue']['retry'] = (job['state']=='queued' and job['attempts']>0
+                                      and bool(state['run'] and state['run']['status']=='failed'))
         return state
 
 

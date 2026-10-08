@@ -19,7 +19,7 @@ flowchart LR
 - PostgreSQL holds hashed sessions, invitations, login counters and encrypted Bright credentials. Every API replica can validate the same session; password changes and logout revoke access across replicas.
 - Shared household tables have tenant-prefixed keys and **forced row-level security**. A transaction sets its tenant from the authenticated server session. The connection pool resets that transaction before reuse. Resource identifiers may safely repeat across households. The application database role is neither a superuser nor a role with `BYPASSRLS`.
 - Dashboard queries use indexed tenant/meter/time lookups. The pool bounds database connections and waiting requests. API processes do not own import threads, schedules, tokens or cached credentials.
-- Imports enter a durable PostgreSQL queue, coalesced to one outstanding job per household. Workers hold a database advisory lock throughout an import; another worker or credential-change/deletion request cannot concurrently operate on that household. Worker death releases its lock, allowing another worker to replay the job. Each write transaction also checks a unique job ownership token, fencing off a worker that loses its lock connection. Reading/tariff upserts make replay safe. Failed imports retry with exponential backoff capped at one hour; successful imports schedule the next refresh.
+- Imports enter a durable PostgreSQL queue, coalesced to one outstanding job per household. Workers hold a database advisory lock throughout an import; another worker or credential-change/deletion request cannot concurrently operate on that household. Worker death releases its lock, allowing another worker to replay the job. Each write transaction also checks a unique job ownership token, fencing off a worker that loses its lock connection. Reading/tariff upserts make replay safe. Failed imports retry after 1, 2, 4, 8 and then at most 15 minutes; success resets the failure count and schedules the normal next refresh. Manual refresh brings a deferred failed job forward, preserving its historical range unless the user explicitly selects a different range. The existing one-minute API cooldown and shared Bright rate limits still apply.
 - Individual provider HTTP requests, including authentication and retries, reserve globally spaced call slots. HTTP 429 responses extend a shared cooldown. `POWERALL_PROVIDER_INTERVAL_SECONDS` defaults to one second; this is an operator throttle, not a claim about Bright's contractual allowance. Increasing workers does not multiply that configured request rate.
 - Housekeeping is claimed once per minute across workers. It removes readings older than 730 days, import history older than 30 days, expired sessions/invitations and old authentication counters. A crash allows the next worker to reclaim housekeeping. Worker heartbeats and aggregate queue state support operational monitoring.
 
@@ -394,3 +394,19 @@ Week, month and custom daily-bar previews now show usage and estimated cost toge
 ```
 
 Refresh the browser and verify previews in each period view and click-to-open. On iPhone, also verify a stationary hold/release, sliding across bars, a quick tap, vertical page scrolling and horizontal scrolling of a long custom period. Keep persistent volumes and existing backend services; rollback uses the previous frontend image without a migration.
+
+## Upgrade: recoverable refresh failures
+
+This release makes deferred failure retries actionable in the UI, allows manual requeueing and caps automatic failure backoff at 15 minutes. Existing API request bodies and queue states remain compatible. `/api/status` adds optional retry metadata; the frontend can also interpret older statuses. No database schema migration, new settings or secrets are required.
+
+Preserve deployment configuration, keys and volumes, and take your normal backup before updating source. Update the API and worker before the frontend:
+
+```sh
+./scripts/compose-npm-ip.sh build api frontend
+./scripts/compose-npm-ip.sh up -d --no-deps api worker
+./scripts/compose-npm-ip.sh up -d --no-deps frontend
+```
+
+The new worker's periodic scheduler brings existing queued failed retries more than 15 minutes away within that limit (normally within its first minute). It preserves their ranges, active ownership and successful refresh schedules. Restarting a worker can interrupt an active import; another worker safely replays it using existing ownership fencing and idempotent writes. A manual retry is available after the existing one-minute cooldown measured from the previous import's start; it does not bypass a Bright provider cooldown.
+
+Verify a failed import displays its countdown with an enabled Retry now button once the short cooldown ends. Confirm pressing it queues the same range, repeat clicks do not create concurrent jobs, and a successful refresh clears the failure state. Your saved readings remain available. Previous API/worker/frontend images can be restored without a schema rollback; already-shortened queue times stay shortened. Do not remove persistent volumes.
