@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import contextmanager, nullcontext
@@ -15,6 +16,15 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 COOKIE = '__Host-powerall_session'
 ITERATIONS = 600_000
 SESSION_SECONDS = 7 * 86400
+
+def auth_concurrency():
+    try:
+        value = int(os.environ.get('POWERALL_AUTH_CONCURRENCY', '4'))
+    except ValueError:
+        raise ValueError('POWERALL_AUTH_CONCURRENCY must be a positive integer.') from None
+    if value < 1:
+        raise ValueError('POWERALL_AUTH_CONCURRENCY must be a positive integer.')
+    return value
 
 class AuthError(ValueError):
     def __init__(self, message, status=400):
@@ -48,6 +58,7 @@ class Accounts:
         self.path = self.root / 'accounts.sqlite3'
         self.cipher = AESGCM(key)
         self.max_users = None
+        self._password_slots = threading.BoundedSemaphore(auth_concurrency())
         self.dummy_hash = password_hash('invalid-account-placeholder')
         with self.db() as db:
             db.executescript('''
@@ -91,9 +102,21 @@ class Accounts:
             db.execute('INSERT INTO invites VALUES(?,?)', (digest(value), int(time.time()) + hours * 3600))
         return value
 
-    def throttle(self, client, username):
+    @contextmanager
+    def password_work(self, db):
+        if not self._password_slots.acquire(blocking=False):
+            raise AuthError('Sign-in is busy. Please try again shortly.', 429)
+        try:
+            yield
+        finally:
+            self._password_slots.release()
+
+    def throttle(self, client, username, *, registration=False):
         now = int(time.time())
-        keys = [digest('ip:' + client), digest('account:' + username)]
+        # Preserve deployed login keys/limits. Sign-up uses an independent budget
+        # identified by invitation, so it cannot lock an existing username out.
+        prefix = 'register:' if registration else ''
+        keys = [digest(prefix + 'ip:' + client), digest(prefix + 'account:' + username)]
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             db.execute('DELETE FROM attempts WHERE instant<?', (now - 900,))
@@ -105,23 +128,32 @@ class Accounts:
 
     def register(self, username, password, invitation, client):
         username = self.username(username)
-        self.throttle(client, username)
-        encoded = password_hash(password)
+        invitation = digest(str(invitation))
+        self.throttle(client, invitation, registration=True)
+        # Reject ineligible requests before allocating expensive password work.
+        with self.db() as db:
+            self.registration_eligible(db, invitation)
+        with self.db() as db, self.password_work(db):
+            encoded = password_hash(password)
         user_id = str(uuid.uuid4())
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
-            invite = db.execute('SELECT token FROM invites WHERE token=? AND expires>?',
-                (digest(str(invitation)), int(time.time()))).fetchone()
-            if not invite:
-                raise AuthError('Invitation is invalid or expired.')
-            if self.max_users is not None and db.execute('SELECT COUNT(*) FROM users').fetchone()[0] >= self.max_users:
-                raise AuthError('Registration is currently at capacity.', 409)
+            # Recheck under the write lock: hashing must not permit an expired
+            # invite, concurrent reuse or a registration beyond capacity.
+            self.registration_eligible(db, invitation)
             try:
                 db.execute('INSERT INTO users VALUES(?,?,?,NULL,?)', (user_id, username, encoded, int(time.time())))
             except self.integrity_errors():
                 raise AuthError('Registration could not be completed. Choose another username.') from None
-            db.execute('DELETE FROM invites WHERE token=?', (invite['token'],))
+            db.execute('DELETE FROM invites WHERE token=?', (invitation,))
         return self.new_session(user_id)
+
+    def registration_eligible(self, db, invitation):
+        if not db.execute('SELECT token FROM invites WHERE token=? AND expires>?',
+                          (invitation, int(time.time()))).fetchone():
+            raise AuthError('Invitation is invalid or expired.')
+        if self.max_users is not None and db.execute('SELECT COUNT(*) FROM users').fetchone()[0] >= self.max_users:
+            raise AuthError('Registration is currently at capacity.', 409)
 
     @staticmethod
     def username(value):
@@ -133,7 +165,7 @@ class Accounts:
         # Invalid names still consume an attempt and run the password KDF.
         username = str(username).lower()[:256]
         self.throttle(client, username)
-        with self.db() as db:
+        with self.db() as db, self.password_work(db):
             suffix=' FOR UPDATE' if hasattr(self,'database') else ''
             user = db.execute('SELECT * FROM users WHERE username=?'+suffix, (username,)).fetchone()
             valid = password_matches(password, user['password'] if user else self.dummy_hash)
@@ -168,15 +200,15 @@ class Accounts:
 
     def verify_password(self, user_id, password, client):
         self.throttle(client, user_id)
-        with self.db() as db:
+        with self.db() as db, self.password_work(db):
             row = db.execute('SELECT password FROM users WHERE id=?', (user_id,)).fetchone()
-        if not row or not password_matches(password, row['password']):
-            raise AuthError('Password is incorrect.', 401)
+            if not row or not password_matches(password, row['password']):
+                raise AuthError('Password is incorrect.', 401)
 
     def change_password(self, user_id, old, new, client):
         self.verify_password(user_id, old, client)
-        encoded = password_hash(new)
-        with self.db() as db:
+        with self.db() as db, self.password_work(db):
+            encoded = password_hash(new)
             if hasattr(self,'database'):
                 current=db.execute('SELECT password FROM users WHERE id=? FOR UPDATE',(user_id,)).fetchone()
                 if not current or not password_matches(old,current['password']): raise AuthError('Password is incorrect.',401)

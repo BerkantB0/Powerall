@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import psycopg
 from psycopg_pool import ConnectionPool
-from .auth import Accounts, password_hash
+from .auth import Accounts, AuthError, auth_concurrency, password_hash
 from .storage import Store
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -96,10 +96,21 @@ class PostgresAccounts(Accounts):
         self.database, self.root = database, Path(root)
         if len(key) != 32: raise ValueError('Invalid encryption key.')
         self.cipher, self.max_users = AESGCM(key), None
+        self.auth_concurrency = auth_concurrency()
         self.dummy_hash = password_hash('invalid-account-placeholder')
     @staticmethod
     def integrity_errors(): return (psycopg.IntegrityError,)
     def db(self): return self.database.connection()
+    @contextmanager
+    def password_work(self, db):
+        # Transaction locks bound password work across processes and replicas.
+        # Commit/rollback or a lost connection releases a slot automatically.
+        for slot in range(self.auth_concurrency):
+            if db.execute('SELECT pg_try_advisory_xact_lock(41002,?) AS acquired', (slot,)).fetchone()['acquired']:
+                yield
+                return
+        raise AuthError('Sign-in is busy. Please try again shortly.', 429)
+
     def delete(self, user_id, record=True):
         with self.db() as db:
             if record: db.execute('INSERT INTO erasures VALUES(?,?) ON CONFLICT DO NOTHING', (user_id, int(time.time())))

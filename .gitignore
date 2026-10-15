@@ -19,3 +19,14 @@ deploy/hosting.env
 backups/
 
 .upgrade.lock/
+
+# Local editor/agent state and generated guidance.
+.agents/
+.codex/
+.openai/
+AGENTS.md
+*.pem
+*.key
+*.sqlite
+*.sqlite3
+*.db

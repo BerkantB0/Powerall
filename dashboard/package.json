@@ -1,6 +1,6 @@
 {
   "name": "powerall-dashboard",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -52,5 +52,6 @@
   "type": "module",
   "overrides": {
     "sharp": "0.35.5"
-  }
+  },
+  "license": "MIT"
 }

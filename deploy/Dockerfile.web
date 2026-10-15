@@ -5,6 +5,9 @@ COPY dashboard/package.json dashboard/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY dashboard/ ./
 RUN npm run build:hosted
+RUN mkdir /third-party-licenses && find node_modules -type f \
+    \( -iname 'license*' -o -iname 'notice*' -o -iname 'copying*' \) \
+    -exec cp --parents -t /third-party-licenses {} +
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
@@ -13,6 +16,9 @@ RUN groupadd --gid 10001 powerall && useradd --uid 10001 --gid powerall --no-cre
 COPY --from=build --chown=10001:10001 /app/.next/standalone ./
 COPY --from=build --chown=10001:10001 /app/.next/static ./.next/static
 COPY --from=build --chown=10001:10001 /app/public ./public
+COPY LICENSE THIRD_PARTY_NOTICES.md ./
+COPY dashboard/vendor/shadcn-tailwind-4.13.0.LICENSE.md ./licenses/shadcn-ui.txt
+COPY --from=build /third-party-licenses ./licenses/npm
 USER 10001:10001
 EXPOSE 3000
 CMD ["node", "server.js"]

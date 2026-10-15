@@ -5,11 +5,15 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 from cryptography.exceptions import InvalidTag
-from powerall.auth import Accounts, AuthError, COOKIE, digest
+from powerall.auth import Accounts, AuthError, COOKIE, auth_concurrency, digest
 from powerall.hosted import create_app
 
 class HostedTests(unittest.TestCase):
@@ -158,8 +162,99 @@ class HostedTests(unittest.TestCase):
         for name in ('alice','nonexistent'):
             code,payload,_=self.call('/api/auth/login',{'username':name,'password':'wrong'})
             self.assertEqual(code,401);self.assertEqual(payload['error'],'Username or password is incorrect.')
-        for _ in range(9):self.call('/api/auth/login',{'username':'alice','password':'wrong'})
+        for index in range(9):
+            self.call('/api/auth/login',{'username':'alice','password':'wrong'},
+                      extra={'HTTP_X_POWERALL_CLIENT_IP':f'different-client-{index}'})
         self.assertEqual(self.call('/api/auth/login',{'username':'alice','password':'fixture-password-long'})[0],429)
+
+    def test_registration_abuse_cannot_consume_login_or_valid_invitation_budget(self):
+        with patch('powerall.auth.password_hash') as hashing:
+            for index in range(30):
+                code,_,_=self.call('/api/auth/register',{'username':'alice','password':'short','invite':f'invalid-{index}'})
+                self.assertEqual(code,400)
+            self.assertEqual(self.call('/api/auth/register',{'username':'alice','password':'short','invite':'one-more'})[0],429)
+            hashing.assert_not_called()
+        # Even the same client address retains its separate sign-in allowance.
+        self.assertEqual(self.call('/api/auth/login',{'username':'alice','password':'fixture-password-long'})[0],200)
+        self.assertEqual(self.call('/api/auth/register',{'username':'fresh-account','password':'fixture-password-long',
+            'invite':self.accounts.invite()},extra={'HTTP_X_POWERALL_CLIENT_IP':'fresh-registration-client'})[0],200)
+
+    def test_registration_eligibility_is_checked_before_hashing(self):
+        expired=self.accounts.invite(hours=-1)
+        used=self.accounts.invite()
+        with self.accounts.db() as db:db.execute('DELETE FROM invites WHERE token=?',(digest(used),))
+        with patch('powerall.auth.password_hash') as hashing:
+            for invitation in ('invalid',expired,used):
+                self.assertEqual(self.call('/api/auth/register',{'username':'eligible-user','password':'fixture-password-long','invite':invitation})[0],400)
+            self.accounts.max_users=2
+            self.assertEqual(self.call('/api/auth/register',{'username':'eligible-user','password':'fixture-password-long',
+                'invite':self.accounts.invite()})[0],409)
+            hashing.assert_not_called()
+
+    def test_registration_rechecks_expiry_after_password_work(self):
+        invitation=self.accounts.invite()
+        def expire(password):
+            with self.accounts.db() as db:db.execute('UPDATE invites SET expires=1 WHERE token=?',(digest(invitation),))
+            return self.accounts.dummy_hash
+        with patch('powerall.auth.password_hash',side_effect=expire):
+            self.assertEqual(self.call('/api/auth/register',{'username':'expired-during-hash','password':'fixture-password-long','invite':invitation})[0],400)
+        with self.accounts.db() as db:
+            self.assertIsNone(db.execute('SELECT id FROM users WHERE username=?',('expired-during-hash',)).fetchone())
+
+    def test_concurrent_registration_cannot_reuse_invitation(self):
+        invitation=self.accounts.invite()
+        ready=threading.Barrier(2)
+        def hashing(password):
+            ready.wait(timeout=5)
+            return self.accounts.dummy_hash
+        def register(index):
+            try:
+                self.accounts.register(f'concurrent-{index}','fixture-password-long',invitation,f'concurrent-client-{index}')
+                return 200
+            except AuthError as error:return error.status
+        with patch('powerall.auth.password_hash',side_effect=hashing), ThreadPoolExecutor(max_workers=2) as executor:
+            results=list(executor.map(register,range(2)))
+        self.assertCountEqual(results,[200,400])
+        with self.accounts.db() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM users WHERE username LIKE 'concurrent-%'").fetchone()[0],1)
+
+    def test_password_work_is_bounded_and_busy_registration_preserves_invitation(self):
+        invitation=self.accounts.invite()
+        payload={'username':'busy-user','password':'fixture-password-long','invite':invitation}
+        with ExitStack() as occupied, patch('powerall.auth.password_matches') as matching, patch('powerall.auth.password_hash') as hashing:
+            for _ in range(auth_concurrency()):occupied.enter_context(self.accounts.password_work(None))
+            self.assertEqual(self.call('/api/auth/login',{'username':'alice','password':'fixture-password-long'})[0],429)
+            self.assertEqual(self.call('/api/auth/register',payload)[0],429)
+            self.assertEqual(self.call('/api/auth/password',{'password':'fixture-password-long','new_password':'new-fixture-passphrase'},token=self.token)[0],429)
+            matching.assert_not_called();hashing.assert_not_called()
+            self.assertEqual(self.call('/api/status',token=self.token)[0],200)
+        self.assertEqual(self.call('/api/auth/register',payload)[0],200)
+        self.assertEqual(self.call('/api/auth/login',{'username':'alice','password':'fixture-password-long'})[0],200)
+
+    def test_login_ip_budget_still_bounds_requests_with_rotating_usernames(self):
+        with patch('powerall.auth.password_matches',return_value=False) as matching:
+            for index in range(30):
+                self.assertEqual(self.call('/api/auth/login',{'username':f'unknown-{index}','password':'wrong'})[0],401)
+            self.assertEqual(self.call('/api/auth/login',{'username':'one-more','password':'wrong'})[0],429)
+            self.assertEqual(matching.call_count,30)
+
+    def test_password_work_limit_configuration(self):
+        for value in ('0','-1','bad','1.5',''):
+            with patch.dict(os.environ,{'POWERALL_AUTH_CONCURRENCY':value}), self.assertRaises(ValueError):
+                auth_concurrency()
+        with patch.dict(os.environ,{'POWERALL_AUTH_CONCURRENCY':'7'}):self.assertEqual(auth_concurrency(),7)
+
+    def test_deployed_login_attempt_keys_and_sessions_remain_valid(self):
+        with self.accounts.db() as db:
+            db.executemany('INSERT INTO attempts VALUES(?,?)',[(digest('account:alice'),int(time.time()))]*9)
+        reopened=Accounts(self.accounts.root,self.key)
+        self.assertEqual(reopened.session(self.token)['user_id'],self.alice['user_id'])
+        with self.assertRaises(AuthError) as wrong:
+            reopened.login('alice','wrong','fixture-legacy-client')
+        self.assertEqual(wrong.exception.status,401)
+        with self.assertRaises(AuthError) as limited:
+            reopened.login('alice','fixture-password-long','fixture-other-client')
+        self.assertEqual(limited.exception.status,429)
     def test_encrypted_backup_tamper_rejection_and_restored_account_reset(self):
         key_file=Path(self.folder.name)/'encryption_key';key_file.write_text(self.key.hex())
         backup_key=Path(self.folder.name)/'backup_key';backup_key.write_text(os.urandom(32).hex())

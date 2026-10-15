@@ -6,6 +6,7 @@ import threading
 import time
 import unittest
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -185,6 +186,63 @@ class PostgresTests(unittest.TestCase):
         with self.assertRaises(AuthError):self.accounts.register('fixture-'+secrets.token_hex(8),'fixture-long-passphrase',invite,'fixture-unique-client')
         for _ in range(10):self.accounts.throttle('fixture-throttle-client',self.ids[0])
         with self.assertRaises(AuthError):self.accounts.throttle('fixture-throttle-client',self.ids[0])
+    def test_registration_abuse_does_not_block_login_on_postgres(self):
+        from powerall.auth import AuthError
+        with self.accounts.db() as db:
+            username=db.execute('SELECT username FROM users WHERE id=?',(self.ids[0],)).fetchone()['username']
+        client='fixture-registration-'+secrets.token_hex(8)
+        with patch('powerall.auth.password_hash') as hashing:
+            for index in range(10):
+                with self.assertRaises(AuthError) as refused:
+                    self.accounts.register(username,'short',f'invalid-{client}-{index}',client)
+                self.assertEqual(refused.exception.status,400)
+            hashing.assert_not_called()
+        token=self.accounts.login(username,'invalid-account-placeholder',client)
+        self.assertEqual(self.accounts.session(token)['user_id'],self.ids[0])
+
+    def test_concurrent_registration_rechecks_capacity_after_hashing(self):
+        from powerall.auth import AuthError
+        barrier=threading.Barrier(2)
+        invitations=[self.accounts.invite(),self.accounts.invite()]
+        names=['fixture-capacity-'+secrets.token_hex(8) for _ in range(2)]
+        with self.accounts.db() as db:
+            self.accounts.max_users=db.execute('SELECT COUNT(*) FROM users').fetchone()[0]+1
+        def hashing(password):
+            barrier.wait(timeout=5)
+            return self.accounts.dummy_hash
+        def register(index):
+            try:
+                return 200,self.accounts.register(names[index],'fixture-long-passphrase',invitations[index],names[index])
+            except AuthError as error:return error.status,None
+        with patch('powerall.auth.password_hash',side_effect=hashing), ThreadPoolExecutor(max_workers=2) as executor:
+            results=list(executor.map(register,range(2)))
+        for status,token in results:
+            if token:self.ids.append(self.accounts.session(token)['user_id'])
+        self.assertCountEqual([status for status,_ in results],[200,409])
+
+    def test_password_work_limit_is_shared_across_replicas_and_released(self):
+        from powerall.auth import AuthError
+        from powerall.postgres import Database,PostgresAccounts
+        from powerall.hosted import read_secret
+        replica=Database()
+        key=bytes.fromhex(read_secret('POWERALL_ENCRYPTION_KEY',64).decode())
+        with patch.dict(os.environ,{'POWERALL_AUTH_CONCURRENCY':'1'}):
+            first=PostgresAccounts(self.database,'/tmp',key)
+            second=PostgresAccounts(replica,'/tmp',key)
+        with first.db() as db:
+            username=db.execute('SELECT username FROM users WHERE id=?',(self.ids[0],)).fetchone()['username']
+        try:
+            with first.db() as occupied, first.password_work(occupied):
+                with patch('powerall.auth.password_matches') as matching, self.assertRaises(AuthError) as busy:
+                    second.login(username,'invalid-account-placeholder','fixture-busy-'+secrets.token_hex(8))
+                self.assertEqual(busy.exception.status,429);matching.assert_not_called()
+                self.assertEqual(self.stores[0].meters(),[])
+            self.assertIsNotNone(second.login(username,'invalid-account-placeholder','fixture-after-commit-'+secrets.token_hex(8)))
+            with self.assertRaisesRegex(RuntimeError,'fixture rollback'):
+                with first.db() as occupied, first.password_work(occupied):raise RuntimeError('fixture rollback')
+            self.assertIsNotNone(second.login(username,'invalid-account-placeholder','fixture-after-rollback-'+secrets.token_hex(8)))
+        finally:replica.close()
+
     def test_replaced_worker_cannot_write_with_stale_ownership(self):
         from powerall.postgres import PostgresStore
         from powerall.jobs import QueuedSync
