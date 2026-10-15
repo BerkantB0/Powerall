@@ -1,15 +1,18 @@
-# Powerall interface
+# Powerall dashboard
 
-This is the React/Next.js interface for Powerall. Start both the interface and the local Bright data service using `python3 scripts/run.py` from the parent project folder. See the parent `README.md` for configuration, historical tariffs, cost assumptions and tests.
+This folder contains the React/Next.js interface and its server-side API proxy. It is part of Powerall, not a separate service that talks directly to Bright.
 
-Frontend commands (inside this folder):
+Start both the local interface and API with `python3 scripts/run.py` from the project root. For account-enabled Docker mode, use the local preview or hosting instructions in the [main README](../README.md).
+
+From this folder:
 
 ```sh
 npm ci
-npm run typecheck
-npm run build
+npm run dev
 ```
 
-`npm run dev` runs the interface alone and expects the data service at `127.0.0.1:8765`. `npm run start` serves the built version. In SQLite mode, Bright credentials belong in the parent `.env`. In hosted mode, each user connects Bright through the account interface; credentials are encrypted server-side. Never put credentials in this folder or client environment variables.
+Development mode listens on `127.0.0.1:5173` and expects the API on `127.0.0.1:8765`. Set `POWERALL_PORT` only if the local API uses a different port. `npm run build` and `npm run start` provide a local production build; Docker uses `npm run build:hosted` for standalone output.
 
-The Docker deployment uses a standalone production build. To test registration, sign-in and separate households locally, run `.venv/bin/python scripts/run-hosted-local.py start` from the parent project folder and open its printed invitation. The preview uses HTTPS at localhost:8443 and a separate PostgreSQL database. Account passwords require at least 12 characters. See [HOSTING.md](../HOSTING.md) for local preview and remote deployment instructions.
+Bright credentials belong in the root `.env` for local mode, or the account connection form for hosted mode. Never put credentials in this folder, client-side code or public environment variables.
+
+Tests and contribution guidance are in [CONTRIBUTING.md](../CONTRIBUTING.md). The UI must keep reading gaps, missing prices and UK clock-change intervals distinct.

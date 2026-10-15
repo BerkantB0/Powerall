@@ -1,179 +1,71 @@
 # Hosting Powerall
 
-The hosted app uses PostgreSQL, stateless API processes and separate import workers. Registration remains invite-only. There is **no default account ceiling**; an optional positive `POWERALL_MAX_ACCOUNTS` limits registrations when an operator wants a quota. This is a configuration setting, not a provider limit or a measured capacity claim.
+Use hosted mode for remote access or more than one household. It provides invite-only accounts, encrypted Bright credentials, PostgreSQL storage and background import workers.
 
-The local launcher still uses SQLite and your local `.env`. Hosted startup never discovers, copies or exposes that data automatically.
+For a local Docker preview with temporary development certificates, use `scripts/run-hosted-local.py` as described in the README. The instructions here are for a server with a real HTTPS hostname.
 
-## Architecture
+## What runs where
 
 ```mermaid
 flowchart LR
-    Browser -->|HTTPS| Caddy
-    Caddy --> Web[Next.js frontend]
-    Web -->|Internal token| API[Stateless API replicas]
-    API --> PG[(PostgreSQL: accounts, sessions, household data, jobs)]
-    Worker[Import worker replicas] --> PG
-    Worker -->|HTTPS and shared throttling| Bright[Glowmarkt]
+    Browser -->|HTTPS| Gateway[Caddy or NPM then Caddy]
+    Gateway --> Frontend[Next.js]
+    Frontend --> API[Account and dashboard API]
+    API --> Database[(PostgreSQL)]
+    Worker[Import workers] --> Database
+    Worker -->|HTTPS| Bright[Bright / Glowmarkt]
 ```
 
-- PostgreSQL holds hashed sessions, invitations, login counters and encrypted Bright credentials. Every API replica can validate the same session; password changes and logout revoke access across replicas.
-- Shared household tables have tenant-prefixed keys and **forced row-level security**. A transaction sets its tenant from the authenticated server session. The connection pool resets that transaction before reuse. Resource identifiers may safely repeat across households. The application database role is neither a superuser nor a role with `BYPASSRLS`.
-- Dashboard queries use indexed tenant/meter/time lookups. The pool bounds database connections and waiting requests. API processes do not own import threads, schedules, tokens or cached credentials.
-- Imports enter a durable PostgreSQL queue, coalesced to one outstanding job per household. Workers hold a database advisory lock throughout an import; another worker or credential-change/deletion request cannot concurrently operate on that household. Worker death releases its lock, allowing another worker to replay the job. Each write transaction also checks a unique job ownership token, fencing off a worker that loses its lock connection. Reading/tariff upserts make replay safe. Failed imports retry after 1, 2, 4, 8 and then at most 15 minutes; success resets the failure count and schedules the normal next refresh. Manual refresh brings a deferred failed job forward, preserving its historical range unless the user explicitly selects a different range. The existing one-minute API cooldown and shared Bright rate limits still apply.
-- Individual provider HTTP requests, including authentication and retries, reserve globally spaced call slots. HTTP 429 responses extend a shared cooldown. `POWERALL_PROVIDER_INTERVAL_SECONDS` defaults to one second; this is an operator throttle, not a claim about Bright's contractual allowance. Increasing workers does not multiply that configured request rate.
-- Housekeeping is claimed once per minute across workers. It removes readings older than 730 days, import history older than 30 days, expired sessions/invitations and old authentication counters. A crash allows the next worker to reclaim housekeeping. Worker heartbeats and aggregate queue state support operational monitoring.
+Only the gateway is published. The API, frontend and database communicate on private Docker networks. The API and workers can have multiple replicas; accounts, sessions, import jobs and provider throttling are shared in PostgreSQL. Household data uses tenant-scoped keys and forced row-level security.
 
-The queue uses PostgreSQL so this deployment does not also require Redis. API and worker services can scale independently. A single Compose host still has finite CPU, memory and database throughput; multiple machines require a shared PostgreSQL endpoint and a load balancer. This implementation has concurrency/integration tests, not a production capacity benchmark.
+A single Compose host still has finite resources. Start with enough memory for the configured service limits (roughly 3 GB, plus operating system and build overhead), then size from actual usage. There is no tested maximum household capacity.
 
-## Security and privacy
+## Requirements
 
-Login passwords use salted PBKDF2-HMAC-SHA256 with 600,000 iterations. Session and invitation tokens are stored as SHA-256 hashes. Cookies use `Secure`, `HttpOnly`, `SameSite=Lax`, `__Host-` and seven-day expiry. Mutations require the configured HTTPS Origin and a signed-in session's CSRF token. Only Next.js receives the internal API token; it never reaches the browser.
+- Docker and Compose **2.24.4 or later**.
+- Python 3.10+ to generate secrets.
+- A server you control, persistent storage and a public hostname.
+- HTTPS, either through the included Caddy gateway or an existing reverse proxy.
+- A backup plan for the database, credential key, backup key and deletion ledger.
 
-Bright credentials use AES-256-GCM with the account UUID as associated data. The mounted key is separate from PostgreSQL and the image. API and workers receive this key; only workers call Bright. Provider tokens stay in worker memory. Redirects are refused, responses are bounded and requests time out. Frontend containers receive neither database passwords nor the credential encryption key.
+## Configuration and secrets
 
-Only Caddy publishes ports 80/443. Application containers run as UID 10001 with read-only root filesystems, dropped capabilities and resource bounds. PostgreSQL uses its official image and a private persistent volume. Caddy adds HTTPS, HSTS, framing/referrer/CSP restrictions, no-store and noindex. Access logs are disabled; operational logs rotate. No request bodies, credentials, tokens or user identifiers should be added to logs.
-
-Privileged operators/hosting infrastructure can read data and decrypt credentials. Use encrypted host disks: Docker volumes are not inherently encrypted. There is no MFA/SSO or automatic email recovery yet. Specify the actual operator, privacy contact, hosting location and lawful basis; review the app's `/privacy` page against actual operations. Sign-in passwords require at least 12 characters. Each user connects their own Bright account and consent. Revisit provider arrangements if this becomes a public or commercial service.
-
-## Deploy
-
-Use a maintained Docker host, domain and inbound 80/443. Start with enough RAM for PostgreSQL, frontend, API and workers (around 3 GB for the supplied container limits, plus build overhead); size the host from observed load.
+From a fresh checkout:
 
 ```sh
 cp deploy/hosting.env.example deploy/hosting.env
-# Set domain, ACME email and operator/privacy details.
 python3 scripts/create-hosting-secrets.py
-# Protect an offline copy of all five generated secrets first.
-sudo chown 10001:10001 deploy/secrets/encryption_key deploy/secrets/internal_token deploy/secrets/backup_key deploy/secrets/database_password
-sudo chmod 600 deploy/secrets/*
-# The official PostgreSQL image must read both database password secrets.
-# File-backed Compose secrets preserve host ownership. Grant the container's postgres
-# user (UID 999 in this image) read access to database_password and database_admin_password,
-# and grant UID 10001 access to database_admin_password for maintenance backups.
-# Use host ACLs for these two files; do not make secrets world-readable.
-chmod 700 deploy/secrets
 chmod 600 deploy/hosting.env
-
-docker compose --env-file deploy/hosting.env config --quiet
-docker compose --env-file deploy/hosting.env build --pull
-docker compose --env-file deploy/hosting.env up -d
-docker compose --env-file deploy/hosting.env ps
 ```
 
-On Linux with POSIX ACL support, after assigning both database secrets to UID 10001, a typical ACL is:
+Edit `deploy/hosting.env` with your hostname and operator/privacy details. These values appear on the privacy page and should describe your actual service. Each user supplies their own Bright credentials after signing in; do not put a shared household's Bright password in this file.
+
+The generator creates five secrets under `deploy/secrets/` and preserves files that already exist. Keep protected copies separately from the server. The credential encryption key is required to recover saved Bright connections; the backup key is required to decrypt backups.
+
+On a standard Linux Docker host, application containers use UID 10001 and the supplied PostgreSQL image uses UID 999. File-backed Compose secrets must be readable by those users. With POSIX ACL support:
 
 ```sh
-sudo chown 10001:10001 deploy/secrets/database_admin_password
+sudo chown 10001:10001 deploy/secrets/*
+sudo chmod 600 deploy/secrets/*
 sudo setfacl -m u:999:r deploy/secrets/database_password deploy/secrets/database_admin_password
+chmod 700 deploy/secrets
 ```
 
-The initial database entrypoint creates a dedicated non-superuser application role. A one-shot `migrate` service applies versioned schema changes before API/worker startup. Do not run schema migrations independently from application releases. Changing a database password secret does not update an already initialized PostgreSQL role; rotate the role and secret together.
+Adapt ownership for rootless Docker or hosts with different UID mappings. Do not solve permission errors by making secrets world-readable. Changing a password file does not change an existing PostgreSQL role's password; those must be rotated together.
 
-Caddy obtains certificates once DNS and ports are correct. There are no seeded accounts. Generate a private single-use 48-hour invite:
+## Choose the gateway mode
 
-```sh
-docker compose --env-file deploy/hosting.env exec -T api python -m powerall.manage invite
-```
+| Mode | Compose command prefix | Public entry point |
+| --- | --- | --- |
+| NPM through a private host IP | `./scripts/compose-npm-ip.sh` | NPM provides HTTPS |
+| NPM on a shared Docker network | `./scripts/compose-npm.sh` | NPM provides HTTPS |
+| Standalone Caddy | `docker compose --env-file deploy/hosting.env` | Caddy publishes 80/443 |
 
-The link uses a fragment removed by the login form. Deliver it privately. Account recovery remains an operator action after verifying identity:
+Use the same prefix for every command in a deployment. Plain `docker compose` omits the hosting env file and NPM override.
 
-```sh
-docker compose --env-file deploy/hosting.env exec api python -m powerall.manage reset-password USERNAME
-```
+### NPM through a private host IP
 
-There is no public admin API. Pause provider access by setting `POWERALL_BRIGHT_ENABLED=false` and recreating both API and worker services. An already active import finishes before stopping; paused workers continue privacy housekeeping.
-
-Never use `docker compose down -v` on real data unless destroying the persistent volumes is intended.
-
-## Nginx Proxy Manager
-
-Use the explicit `compose.npm.yaml` override when NPM already manages HTTPS. The route becomes browser → NPM HTTPS → Caddy private HTTP on 8080 → frontend → API. Caddy retains the same headers, no-store policy, 16 KB body limit and timeouts as standalone mode. Its HTTP listener has no published host port, no ACME configuration and no HTTPS redirect. The frontend/API/database remain off NPM's network.
-
-Use Docker Compose **2.24.4 or later** because the override explicitly resets published ports and replaces gateway network membership. `scripts/compose-npm.sh` always includes both files; use that wrapper for all Powerall commands in this mode, including builds, scaling, upgrades, backups and restoration. Plain `docker compose up` uses the standalone configuration and would publish 80/443 again.
-
-Choose an unused subnet and a fixed NPM address outside the network's dynamic allocation range, on a dedicated Docker network. For example (replace this subnet if it overlaps your networks):
-
-```sh
-docker network create --internal --subnet 172.30.50.0/29 --ip-range 172.30.50.4/30 powerall_proxy
-```
-
-Attach **only NPM and Powerall's gateway** to this network. In your NPM Compose configuration, add the external network and pin its address while preserving NPM's existing networks:
-
-```yaml
-services:
-  app:  # Replace with the service name in your NPM stack.
-    networks:
-      default: {}
-      powerall_proxy:
-        ipv4_address: 172.30.50.2
-networks:
-  powerall_proxy:
-    external: true
-    name: powerall_proxy
-```
-
-If NPM already declares additional networks, preserve them too. NPM needs its existing internet-connected network for certificate renewal; this added network is internal. Recreate the NPM container using its own Compose stack so the fixed address persists across restart. This does not expose NPM's database or admin UI to Powerall.
-
-In `deploy/hosting.env`, set:
-
-```dotenv
-POWERALL_DOMAIN=energy.example.com
-POWERALL_PROXY_NETWORK=powerall_proxy
-POWERALL_TRUSTED_PROXY_CIDRS=172.30.50.2/32
-```
-
-`POWERALL_DOMAIN` is the external hostname without a scheme, path or port. Both application services still use `https://energy.example.com` as their exact public origin. `POWERALL_ACME_EMAIL` is unused in NPM mode and can be omitted; NPM owns certificates. Other operator/privacy/database settings and secret permissions still apply.
-
-Trust NPM's **actual fixed address**, not `0.0.0.0/0`, all private networks, or the whole shared subnet. Multiple trusted NPM addresses can be supplied as a space-separated list of exact CIDRs. Caddy refuses direct requests from other peers, strictly parses NPM's `X-Forwarded-For` from the right, and overwrites `X-Powerall-Client-IP` using that result. Browser-supplied client-IP headers are not trusted. A wrong/stale trusted address produces 403; fix the NPM network address instead of broadening trust.
-
-Prepare the same five secrets as standalone deployment, then:
-
-```sh
-./scripts/compose-npm.sh config --quiet
-./scripts/compose-npm.sh build --pull
-./scripts/compose-npm.sh up -d
-./scripts/compose-npm.sh ps
-./scripts/compose-npm.sh exec -T api python -m powerall.manage invite
-```
-
-When switching an existing deployment, recreate its gateway so the old published ports are removed. The wrapper's `up -d` performs that configuration change. Do not delete volumes. The shared network alias is `powerall-gateway`; do not reuse that alias for another application on the same network.
-
-Create an NPM Proxy Host with:
-
-| Setting | Value |
-| --- | --- |
-| Domain Names | `energy.example.com` (your hostname) |
-| Scheme | `http` |
-| Forward Hostname/IP | `powerall-gateway` |
-| Forward Port | `8080` |
-| Cache Assets | Off |
-| SSL Certificate | Your certificate, managed by NPM |
-| Force SSL | On |
-
-Preserve the public Host and Origin. NPM's normal forwarding configuration supplies the Host, forwarded protocol and client-address chain. Use a dedicated hostname rather than a URL subpath. WebSocket support is not required by the current app. Do not forward to the frontend or API directly: the private Caddy gateway enforces request/header controls.
-
-Disable NPM's access logging for this host if you want the same log-minimisation policy as the supplied gateway. NPM normally writes per-host access logs. Use `access_log off;` in this Proxy Host's Advanced configuration, verify the effective configuration with `nginx -T`, and confirm a test request does not create an access-log entry. NPM and its hosting infrastructure still handle IPs/requests; align retention and the privacy notice with actual proxy logging.
-
-For scaling, backup and other commands below, substitute `./scripts/compose-npm.sh` for `docker compose --env-file deploy/hosting.env`. For example:
-
-```sh
-./scripts/compose-npm.sh up -d --scale api=3 --scale worker=2
-./scripts/compose-npm.sh --profile tools run --rm -T maintenance > backups/powerall.enc
-```
-
-The proxy chain was tested with a disposable nginx TLS frontend using NPM's forwarding-header behaviour, not by altering your existing NPM installation. Test your actual host after deployment: register/sign in, load/export readings, verify security headers and ensure a failed login from one client does not throttle everyone as the proxy's IP.
-
-## NPM through the host's internal IP (no shared network)
-
-Use `compose.npm-ip.yaml` instead of `compose.npm.yaml` when NPM connects to a
-published port on the Powerall host's LAN/private IP. No manual network creation
-or NPM network changes are required. Compose still creates Powerall's application
-networks for isolation. Only the gateway publishes a port; frontend, API and
-PostgreSQL remain private.
-
-For example, with Powerall on `192.168.1.50`, NPM on `192.168.1.10`, and the
-public hostname `energy.example.com`, set these in `deploy/hosting.env` along
-with the operator/privacy settings:
+This option does not require creating a shared Docker network with NPM. Set the following in `deploy/hosting.env`, replacing the example addresses:
 
 ```dotenv
 POWERALL_DOMAIN=energy.example.com
@@ -182,231 +74,117 @@ POWERALL_GATEWAY_PORT=8080
 POWERALL_TRUSTED_PROXY_CIDRS=192.168.1.10/32
 ```
 
-The bind IP must belong to the Powerall Docker host. The trusted address must
-be the actual source IP that Caddy sees from NPM. For NPM on a different LAN
-host this is normally that host's LAN IP. For NPM in Docker on the same host,
-Docker routing may preserve its container IP or translate it: inspect the
-traffic rather than assuming the host IP. On the Powerall host, run
-`sudo tcpdump -ni any 'tcp dst port 8080'` while requesting this NPM Proxy Host,
-then trust the observed source as an exact `/32` (or IPv6 `/128`). If it is
-NPM's container IP, keep that address stable in NPM's existing network.
-Requests with a wrong trusted address receive 403.
+The bind address must belong to the Powerall Docker host. The trusted proxy must be the **actual source address Caddy sees**. If NPM is on another computer this may be its LAN IP. If NPM runs in Docker on the same computer, NAT may make the source a Docker bridge gateway instead. Inspect the connection rather than guessing; a wrong trusted address returns 403.
 
-Prepare secrets and UID/ACL permissions as described under Deploy. Docker
-Compose 2.24.4 or later is required. Use this wrapper for every command:
+Trust exact proxy addresses, not all private networks. If NAT makes several clients share the trusted address, restrict the published gateway port with a firewall so only NPM can reach it. The source-IP rule alone cannot distinguish those clients.
+
+Start Powerall:
 
 ```sh
 ./scripts/compose-npm-ip.sh config --quiet
-./scripts/compose-npm-ip.sh build --pull
+./scripts/compose-npm-ip.sh build
 ./scripts/compose-npm-ip.sh up -d
 ./scripts/compose-npm-ip.sh ps
+```
+
+In NPM, create a Proxy Host for the public hostname:
+
+- Forward using **HTTP** to the Powerall host's private IP and configured gateway port.
+- Preserve the public hostname. Use the root of a dedicated hostname, not a URL subpath.
+- Configure a valid certificate and force HTTPS.
+- Leave caching disabled. WebSocket support is not required.
+- Do not forward directly to the API or frontend.
+
+`localhost` inside an NPM container refers to that container, not the Docker host.
+
+### NPM on a shared Docker network
+
+The alternative `compose.npm.yaml` attaches only the gateway to an existing external network and removes its published ports. Set `POWERALL_PROXY_NETWORK`, `POWERALL_DOMAIN` and the actual fixed NPM peer address in `POWERALL_TRUSTED_PROXY_CIDRS`. Keep unrelated containers off that network.
+
+Use `./scripts/compose-npm.sh` for configuration checks, builds and startup. In NPM, forward HTTP to `gateway` on port `8080`. NPM retains its own internet-connected network for certificate renewal.
+
+### Standalone Caddy
+
+Set `POWERALL_DOMAIN` and `POWERALL_ACME_EMAIL`. Point DNS at the server and allow inbound ports 80/443. Use the standalone prefix from the table for `config --quiet`, `build` and `up -d`. Caddy handles certificates and HTTPS.
+
+The commands below use the NPM host-IP wrapper. Substitute your selected prefix if using another gateway mode.
+
+## Accounts and imports
+
+There are no default accounts. Generate a private, single-use invitation, valid for 48 hours:
+
+```sh
 ./scripts/compose-npm-ip.sh exec -T api python -m powerall.manage invite
 ```
 
-Configure the NPM Proxy Host for `energy.example.com` with scheme `http`,
-forward IP `192.168.1.50`, port `8080`, Cache Assets off, its managed certificate
-and Force SSL on. Preserve Host/Origin and normal forwarded headers. Point
-public DNS to NPM; expose only NPM's HTTPS ports publicly. Do not forward
-gateway port 8080 from your router. Restrict the gateway port to the NPM
-source at the host/network firewall where possible, taking Docker's published
-port firewall behaviour into account. Caddy also rejects untrusted peers.
+Open the invitation, create an account and connect Bright under **Data & connection**. Do not share invitation links publicly. Account passwords must have at least 12 characters.
 
-The NPM-to-Powerall hop is HTTP on your private network; use a shared trusted
-LAN or VPN for this route. NPM's access-log/privacy settings from the previous
-section also apply. Plain `docker compose up` would restore the standalone
-80/443 bindings, so always use the IP-mode wrapper for upgrades and maintenance.
+Imports run in a shared queue. A failed job retries after 1–15 minutes; a manual retry brings it forward after the existing one-minute request cooldown. Bright rate limits can still delay requests. Completed chunks and saved readings remain available after a failure.
 
-## Scale and monitor
-
-For a single host:
+An operator can inspect aggregate worker and queue state or reset an account password after verifying the account owner's identity:
 
 ```sh
-docker compose --env-file deploy/hosting.env up -d --scale api=3 --scale worker=2
-docker compose --env-file deploy/hosting.env exec -T api python -m powerall.manage status
+./scripts/compose-npm-ip.sh exec -T api python -m powerall.manage status
+./scripts/compose-npm-ip.sh exec api python -m powerall.manage reset-password USERNAME
 ```
 
-Docker DNS and the existing reverse proxies route to service replicas; Gunicorn starts two processes per API container. On several hosts, supply the shared database host and route private API traffic through a load balancer. For remote/managed PostgreSQL, set `POWERALL_DATABASE_SSLMODE=verify-full`, mount the provider's CA read-only and set `POWERALL_DATABASE_SSLROOTCERT` to its container path. Set `POWERALL_DATABASE_USER`/`POWERALL_DATABASE_NAME` if needed. Restrict database network access. The included Compose stack assumes its isolated local database network.
+There is no public admin interface, email recovery, MFA or SSO. `POWERALL_MAX_ACCOUNTS` optionally limits registrations; leaving it empty does not imply unlimited capacity. Set `POWERALL_BRIGHT_ENABLED=false` and recreate API/worker services to pause provider access. Active imports may finish before workers stop.
 
-Budget connections: API replicas × Gunicorn processes × `POWERALL_DB_POOL_SIZE`, plus worker pools, maintenance and administration must stay below PostgreSQL `max_connections`. The default pool maximum is eight, with one eagerly opened connection per process. Each worker handles one import at a time and may hold a separate advisory-lock connection. Container memory limits apply per replica.
+## Data protection and retention
 
-`status` reports active heartbeats and queued/running/idle job counts with oldest availability times, without household identifiers. Alert on no live worker, sustained overdue jobs, repeated database/API health failures, disk growth and backup failures. `/healthz` checks database connectivity on the private API port. Set monitoring cadence and capacity from actual queue lag and provider response times. PostgreSQL can later move to a managed service without changing the dashboard/provider contract; much larger reading datasets may merit time partitioning and aggregate caches based on profiling.
+Bright credentials use authenticated encryption with a separate key. Passwords are hashed and sessions are stored as token hashes. Cookies are Secure, HttpOnly and SameSite; writes require the configured Origin and CSRF token. Provider tokens stay in worker memory.
 
-## Migrate existing SQLite data
+Containers use private networks, restricted privileges and read-only application filesystems. The gateway supplies security headers and disables caching. Do not add request bodies, credentials or user identifiers to logs. Docker volumes are not encrypted automatically; protect the host and backup storage. Operators with the key and database access can decrypt Bright credentials.
 
-Stop the old hosted app before copying its private data directory. Keep its original encryption key when migrating encrypted Bright connections. Stop the new API/workers during import. Mount a **copy** of the old directory read-only into the private maintenance service. For example, with an absolute path on the Docker host:
+Registration and sign-in have separate attempt limits. Sign-in remains limited per IP and per account. `POWERALL_AUTH_CONCURRENCY` defaults to four simultaneous password operations across all API replicas; excess requests receive a temporary 429 response. Use the same setting for every replica and tune it to available CPU capacity. These controls do not replace request limiting at the public proxy.
 
-```sh
-docker compose --env-file deploy/hosting.env stop api worker
-docker compose --env-file deploy/hosting.env --profile tools run --rm \
-  -v /protected/old-powerall-data:/legacy:ro maintenance \
-  python -m powerall.manage migrate-sqlite --source /legacy
-docker compose --env-file deploy/hosting.env start api worker
-```
+Hosted housekeeping removes readings older than 730 days and import history older than 30 days. Account exports omit credentials. Disconnecting Bright removes its credentials and pending jobs but keeps readings. Account deletion removes live account and household data and records the deletion in an erasure ledger. An active import blocks disconnect/deletion until it finishes.
 
-This requires an empty destination account database and imports users, encrypted connections and each household's meters/readings/tariffs/settings/history in one transaction. It excludes old sessions/invitations and applies the old erasure ledger. Verify the credential key before migrating: invalid ciphertext aborts the transaction. It leaves SQLite sources unchanged.
+Review [SECURITY.md](SECURITY.md) and the app's privacy page before inviting others. Provider access and consent are separate from this project's open-source license.
 
-For the original single-user local app, create your hosted account first, then import a read-only copy of `data/` into that account:
+## Backups and recovery
 
-```sh
-docker compose --env-file deploy/hosting.env --profile tools run --rm \
-  -v /protected/local-data-copy:/legacy:ro maintenance \
-  python -m powerall.manage migrate-sqlite --source /legacy --username YOUR_USERNAME
-```
-
-The target household must be empty. This does not import your local `.env` or automatically connect Bright. Interrupted imports become failed history entries; workers safely re-import as necessary. Re-running a migration into a nonempty household is refused.
-
-## Export, disconnect and delete
-
-Users retain CSV and JSON exports, manual tariff editing, password change, Bright disconnect and password-confirmed deletion. Exports omit credentials/password hashes/tokens. Disconnect removes encrypted credentials and pending jobs, retaining history. Deletion cascades all live account, session, household and queue rows. An active import blocks disconnect/deletion until it finishes.
-
-Deleted UUIDs enter an erasure ledger table in the same transaction as live deletion. That table is excluded from ordinary backup/restore, so restoring old data cannot roll the current ledger back. Preserve the latest ledger independently for disaster recovery to a fresh database. Retain backups for at most 30 days. User downloads are outside server retention.
-
-## Online encrypted backups and restoration
-
-The maintenance container alone receives the backup key and database administrator secret. It uses `pg_dump`'s consistent snapshot and streams a custom-format PostgreSQL archive through AES-256-GCM. The API/workers can remain running during backup. No plaintext dump is written inside the running services.
+The maintenance container creates an encrypted PostgreSQL snapshot while the app stays online. Keep backups private, check the command succeeded, and retain the latest deletion ledger independently. The regular database backup deliberately excludes that ledger and does not contain deployment secret keys.
 
 ```sh
 mkdir -p backups
 chmod 700 backups
 umask 077
-docker compose --env-file deploy/hosting.env --profile tools run --rm -T maintenance > backups/powerall.enc
+./scripts/compose-npm-ip.sh --profile tools run --rm -T maintenance > backups/powerall.enc
+./scripts/compose-npm-ip.sh --profile tools run --rm -T maintenance python -m powerall.manage backup-erasures > backups/erasures.enc
 ```
 
-Check command success and discard incomplete output. Choose unique filenames and enforce a 30-day backup retention schedule. Keep the latest encrypted erasure ledger independently: `docker compose --env-file deploy/hosting.env --profile tools run --rm -T maintenance python -m powerall.manage backup-erasures > backups/erasures.enc`. Decrypt it with the same decryptor and restore its data-only archive into the empty erasure table for disaster recovery to a fresh database. The ordinary encrypted dump excludes that ledger and all secret keys. Keep credential/backup keys offline.
+Use unique filenames for subsequent backups and discard incomplete output. Set a retention policy of at most 30 days. Store the keys separately and test recovery before relying on a backup.
 
-Decrypt into a private recovery directory on an encrypted disk using the project Python environment:
+To recover, decrypt into a private directory on an encrypted disk using the Python environment with `requirements-hosted.txt` installed:
 
 ```sh
 .venv/bin/python scripts/decrypt-backup.py backups/powerall.enc /protected/backup_key /protected/powerall.dump
 ```
 
-The script authenticates the archive and removes output if tampered with. Stop API/workers for restore. Mount the dump read-only into maintenance, then restore using the administrator role:
+Stop API and worker services before restoring. Restore to the expected database with the dedicated application role present, preserving table ownership and row-level security. For example, with the dump in `/protected`:
 
 ```sh
-docker compose --env-file deploy/hosting.env stop api worker
-docker compose --env-file deploy/hosting.env --profile tools run --rm \
+./scripts/compose-npm-ip.sh stop api worker
+./scripts/compose-npm-ip.sh --profile tools run --rm \
   -v /protected:/recovery:ro maintenance sh -c \
   'PGPASSWORD="$(cat /run/secrets/database_admin_password)" pg_restore -h database -U postgres -d powerall --clean --if-exists --exit-on-error /recovery/powerall.dump'
-# For a fresh database, restore the latest erasures ledger independently BEFORE these steps.
-docker compose --env-file deploy/hosting.env --profile tools run --rm maintenance python -m powerall.manage apply-erasures
-docker compose --env-file deploy/hosting.env --profile tools run --rm maintenance python -m powerall.manage secure-restored-accounts
-docker compose --env-file deploy/hosting.env start api worker
 ```
 
-Restore into the expected `powerall` database with the dedicated role present. `pg_restore` restores table ownership and forced RLS; do not add `--no-owner`. Applying erasures prevents deleted accounts returning. Securing restored accounts revokes sessions, invalidates restored passwords and clears all Bright connections, preventing a restore from resurrecting superseded access. Verify owners before resetting passwords; each person reconnects Bright. Remove plaintext recovery files. Lost credential keys cannot recover old encrypted connections; replacing that key alone is not a rotation migration.
-
-## Verification
-
-Build the API, frontend and database images before the Docker integration checks (using the NPM wrapper in that mode). The tests use those local images and isolated fixtures.
+If recovering to a fresh database, decrypt and restore the **latest** erasure-ledger backup into its empty table as well. On an existing deployment, preserve its current ledger. Before restarting, apply deletions and invalidate restored account access:
 
 ```sh
-.venv/bin/python -m unittest discover -s tests -v
-.venv/bin/python scripts/test-hosted-stack.py
-.venv/bin/python scripts/test-hosted-stack.py --npm
-cd dashboard
-node --test lib/energy.test.mjs
-npm run typecheck
-npm run lint
+./scripts/compose-npm-ip.sh --profile tools run --rm maintenance python -m powerall.manage apply-erasures
+./scripts/compose-npm-ip.sh --profile tools run --rm maintenance python -m powerall.manage secure-restored-accounts
+./scripts/compose-npm-ip.sh start api worker
 ```
 
-The Docker test uses separate disposable volumes, fake accounts/providers and loopback test TLS. It exercises actual PostgreSQL RLS, session sharing, concurrent workers, crash replay, retries, SQLite migration, HTTPS security controls, non-root/private services, encrypted online backup and restoration with deletion protection. It never reads or copies real credentials or household data. Keep base images/dependencies patched and test restore periodically; these checks do not replace independent security review or load testing.
+These steps prevent deleted accounts, old sessions and superseded Bright connections from returning. Verify account owners before resetting passwords; users reconnect Bright themselves. Remove decrypted recovery files afterward. Never remove real persistent volumes as a routine operation.
 
-## Full hosted flow on your computer
+## Repository utilities
 
-The existing `scripts/run.py` launcher uses local SQLite and skips account registration. To test the complete hosted flow, use:
+- `scripts/upgrade.sh`: applies the current local source to an existing NPM host-IP deployment. It does not fetch source code or upgrade PostgreSQL.
+- `scripts/run-hosted-local.py`: manages the separate local Docker preview.
+- `scripts/test-hosted-stack.py`: checks an isolated test deployment with fake accounts and providers; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-```sh
-.venv/bin/python scripts/run-hosted-local.py start
-```
-
-This starts a persistent `powerall-local` Docker project with PostgreSQL, accounts, separate workers and the same production frontend/API. Only `https://localhost:8443` is published, bound to loopback. It creates separate keys and a local HTTPS certificate under ignored `data/hosted-local/`; it preserves your original SQLite data and deployment keys. This preview does not need NPM. The local certificate is self-signed: your browser may require a one-time certificate exception for this localhost address. The launcher does not change your system trust store. HSTS is omitted only in local preview so other localhost HTTP apps remain usable.
-
-The command prints a single-use registration invitation and saves it privately in `data/hosted-local/invitation.txt`. Open it, choose your own username/password, then connect Bright under Data & connection. The first import runs through the durable worker queue; once it completes, test charts, tariffs, exports, sign-out/sign-in and account controls. Create another invite to test a separate household:
-
-```sh
-.venv/bin/python scripts/run-hosted-local.py invite
-.venv/bin/python scripts/run-hosted-local.py status
-.venv/bin/python scripts/run-hosted-local.py stop
-```
-
-Stopping preserves local PostgreSQL data for the next start. Do not delete the local keys while retaining that database: they protect stored Bright credentials. The local preview's file mounts are readable by their intended Docker Desktop containers, while the enclosing host directories are private (0700). For remote deployment, use the separate production secret/UID/ACL instructions above.
-
-## Gunicorn control socket in read-only containers
-
-The API image starts Gunicorn with `--no-control-socket`. Powerall manages API processes through Docker rather than `gunicornc`; this avoids Gunicorn attempting to create its default socket under the nonexistent, read-only `/home/powerall`. Keep `read_only: true` enabled. For an older deployed image reporting `Control server error: Read-only file system`, copy the updated `deploy/Dockerfile.api`, then run `./scripts/compose-npm-ip.sh build api` and `./scripts/compose-npm-ip.sh up -d api` (or the corresponding wrapper for your deployment mode).
-
-## Upgrade: custom dashboard periods
-
-This release adds `view=custom&date=YYYY-MM-DD&end=YYYY-MM-DD` to the dashboard API.
-Both input dates are included; the response's existing `to` field remains exclusive.
-Existing day/week/month requests and response fields continue to work. There are no
-database schema changes, new secrets or required environment variables. Existing
-accounts, sessions, provider connections, readings and tariffs are preserved.
-
-Before upgrading, take an encrypted backup using the existing backup instructions.
-Copy the updated source while excluding `.env`, `deploy/hosting.env`, `deploy/secrets/`,
-`data/` and `backups/`; keep the current database volumes and keys. For the deployed
-NPM host-IP mode, run:
-
-```sh
-./scripts/compose-npm-ip.sh config --quiet
-./scripts/compose-npm-ip.sh build api frontend
-./scripts/compose-npm-ip.sh up -d
-./scripts/compose-npm-ip.sh ps
-```
-
-Refresh the browser after the services are healthy. If deploying images separately,
-update the API before the frontend: the old API cannot serve custom-range requests.
-A short interruption is possible during single-host container recreation. Verify
-sign-in, an existing calendar view, a custom range, daily drill-down and CSV export.
-Do not use `down -v`. A rollback to the prior API/frontend images needs no database
-rollback for this release; keep the same secrets and configuration.
-
-## Upgrade: chart time-label alignment
-
-This is a frontend-only correction. It aligns axis labels with their actual bars and includes the final interval/date. No API, database, secret or environment changes are needed. Copy the updated source while preserving deployment configuration and private data, then use the deployed NPM host-IP wrapper:
-
-```sh
-./scripts/compose-npm-ip.sh build frontend
-./scripts/compose-npm-ip.sh up -d --no-deps frontend
-```
-
-Refresh the browser after the frontend is healthy. Existing API/worker/database containers can keep running. No persistent volumes should be removed. The previous frontend image can be restored without a data migration.
-
-## Upgrade: iPhone Home Screen icon
-
-This frontend-only change adds an opaque 180×180 PNG of the existing lightning logo and an Apple touch-icon link on every page, including login. No migration, environment changes or new secrets are required. Preserve deployment configuration and data, then run:
-
-```sh
-./scripts/compose-npm-ip.sh build frontend
-./scripts/compose-npm-ip.sh up -d --no-deps frontend
-```
-
-Verify `/apple-touch-icon.png` loads through your public hostname. On iPhone, remove the old Home Screen shortcut, reopen Powerall in Safari and use Share → Add to Home Screen to pick up the icon. Existing backend services and persistent volumes remain in place; rollback requires only the previous frontend image.
-
-## Upgrade: daily chart previews
-
-Week, month and custom daily-bar previews now show usage and estimated cost together on hover or keyboard focus. On touchscreens, hold for 450 ms, then slide across days; release retains the preview and suppresses daily navigation. A quick tap still opens that day. Swipes that begin before the hold activates retain page/custom-chart scrolling. Phone chart cards align with the surrounding cards. Scale labels sit in a separate left gutter without overlapping bars; the plot extends to the normal card padding on the right. Tighter half-hour gaps retain wider bars. This is frontend-only, with no API, schema or configuration changes. Preserve deployment secrets and data when copying updated source, then run:
-
-```sh
-./scripts/compose-npm-ip.sh build frontend
-./scripts/compose-npm-ip.sh up -d --no-deps frontend
-```
-
-Refresh the browser and verify previews in each period view and click-to-open. On iPhone, also verify a stationary hold/release, sliding across bars, a quick tap, vertical page scrolling and horizontal scrolling of a long custom period. Keep persistent volumes and existing backend services; rollback uses the previous frontend image without a migration.
-
-## Upgrade: recoverable refresh failures
-
-This release makes deferred failure retries actionable in the UI, allows manual requeueing and caps automatic failure backoff at 15 minutes. Existing API request bodies and queue states remain compatible. `/api/status` adds optional retry metadata; the frontend can also interpret older statuses. No database schema migration, new settings or secrets are required.
-
-Preserve deployment configuration, keys and volumes, and take your normal backup before updating source. Update the API and worker before the frontend:
-
-```sh
-./scripts/compose-npm-ip.sh build api frontend
-./scripts/compose-npm-ip.sh up -d --no-deps api worker
-./scripts/compose-npm-ip.sh up -d --no-deps frontend
-```
-
-The new worker's periodic scheduler brings existing queued failed retries more than 15 minutes away within that limit (normally within its first minute). It preserves their ranges, active ownership and successful refresh schedules. Restarting a worker can interrupt an active import; another worker safely replays it using existing ownership fencing and idempotent writes. A manual retry is available after the existing one-minute cooldown measured from the previous import's start; it does not bypass a Bright provider cooldown.
-
-Verify a failed import displays its countdown with an enabled Retry now button once the short cooldown ends. Confirm pressing it queues the same range, repeat clicks do not create concurrent jobs, and a successful refresh clears the failure state. Your saved readings remain available. Previous API/worker/frontend images can be restored without a schema rollback; already-shortened queue times stay shortened. Do not remove persistent volumes.
+Production load capacity and independent security assessment remain outside the current validation coverage.
